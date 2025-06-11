@@ -22,10 +22,10 @@ export interface VehicleDocument {
   expiryDate: string | null; // ISO Date string (user-confirmed or manually set)
   documentUrl?: string; // URL to the stored document
   documentName?: string; // Name of the uploaded file
-  status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing';
-  uploadedAt: string;
-  aiExtractedDate?: string | null; // Date extracted by AI
-  aiConfidence?: number | null;   // Confidence score from AI
+  status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing'; // This status is for THIS specific document instance
+  uploadedAt: string; // ISO datetime string when this document record was created/uploaded
+  aiExtractedDate?: string | null; // Date extracted by AI (ISO Date string)
+  aiConfidence?: number | null;   // Confidence score from AI for the aiExtractedDate
 }
 
 export interface Alert {
@@ -60,9 +60,9 @@ export interface VehicleComplianceStatusBreakdown {
 }
 export interface SummaryStats {
   totalVehicles: number;
-  compliantVehicles: number; // Vehicles where all docs are compliant
-  expiringSoonDocuments: number; // Overall count of docs expiring soon
-  overdueDocuments: number; // Overall count of overdue docs
+  compliantVehicles: number; // Vehicles where all *required currently active* docs are compliant
+  expiringSoonDocuments: number; // Overall count of *currently active* docs expiring soon
+  overdueDocuments: number; // Overall count of *currently active* overdue docs
   // Document-specific counts (optional, can be derived or explicitly added)
   expiringInsurance?: number;
   overdueInsurance?: number;
@@ -98,4 +98,6 @@ export interface AuditLogEntry {
 export interface ReportableDocument extends VehicleDocument {
   vehicleRegistration: string;
   daysDifference: number; // positive for days left, negative for days overdue
+  // status is already on VehicleDocument, representing status of THIS instance
 }
+

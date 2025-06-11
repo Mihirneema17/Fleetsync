@@ -1,11 +1,12 @@
 
+
 "use client";
 import React, { useEffect, useState } from 'react';
 import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, ActivitySquare, Leaf, Paperclip, PieChart as PieChartIcon, AlertCircle, Loader2 } from 'lucide-react';
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { getSummaryStats, getVehicles, getAlerts, getDocumentComplianceStatus } from '@/lib/data';
+import { getSummaryStats, getVehicles, getAlerts, getDocumentComplianceStatus, getOverallVehicleCompliance } from '@/lib/data';
 import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument, VehicleComplianceStatusBreakdown } from '@/lib/types';
 import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDistanceToNow, parseISO, differenceInDays, format } from 'date-fns';
-import { EXPIRY_WARNING_DAYS, DATE_FORMAT } from '@/lib/constants';
+import { EXPIRY_WARNING_DAYS, DATE_FORMAT, DOCUMENT_TYPES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import {
   ChartContainer,
@@ -30,7 +31,7 @@ import { PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 interface DocumentAlertItem {
   vehicleId: string;
   vehicleRegistration: string;
-  documentId: string;
+  documentId: string; // ID of the specific document instance
   documentType: DocumentType;
   customTypeName?: string;
   expiryDate: string;
@@ -68,10 +69,10 @@ export default function DashboardPage() {
       const [summary, vehiclesData, alertsData] = await Promise.all([
         getSummaryStats(),
         getVehicles(),
-        getAlerts().then(a => a.filter(al => !al.isRead).slice(0, 5))
+        getAlerts().then(a => a.filter(al => !al.isRead).slice(0, 5)) // Get all alerts, then filter client-side for unread
       ]);
       setStats(summary);
-      setAllVehicles(vehiclesData);
+      setAllVehicles(vehiclesData); // Store all vehicles for document status section
       setRecentVehicles(vehiclesData.slice(0, 4));
       setAlerts(alertsData);
       setIsLoading(false);
@@ -79,58 +80,60 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
-  const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docType: DocumentType): DocumentAlertItem[] => {
+  // Process vehicles to find the LATEST document of each type that is ExpiringSoon or Overdue
+  const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docTypeToFilter: DocumentType): DocumentAlertItem[] => {
     const items: DocumentAlertItem[] = [];
     const now = new Date();
 
     vehicles.forEach(vehicle => {
-      vehicle.documents.forEach(doc => {
-        if (doc.type === docType && doc.expiryDate) {
-          const expiry = parseISO(doc.expiryDate);
-          const daysDifference = differenceInDays(expiry, now);
-          const complianceStatus = getDocumentComplianceStatus(doc.expiryDate);
+      // Find the latest document of the specified type for this vehicle
+      const docsOfType = vehicle.documents.filter(d => d.type === docTypeToFilter && d.expiryDate);
+      if (docsOfType.length === 0) return;
 
-          if (complianceStatus === 'Overdue' || complianceStatus === 'ExpiringSoon') {
-            let statusText = '';
-            let statusVariant: DocumentAlertItem['statusVariant'] = 'default';
+      docsOfType.sort((a, b) => parseISO(b.expiryDate!).getTime() - parseISO(a.expiryDate!).getTime());
+      const latestDoc = docsOfType[0]; // This is the most recent document of this type
 
-            if (complianceStatus === 'Overdue') {
-              statusText = `Overdue by ${Math.abs(daysDifference)} day(s)`;
-              statusVariant = 'destructive';
-            } else if (complianceStatus === 'ExpiringSoon') {
-              statusText = `Expires in ${daysDifference} day(s)`;
-              statusVariant = 'secondary';
-            }
-            
-            items.push({
-              vehicleId: vehicle.id,
-              vehicleRegistration: vehicle.registrationNumber,
-              documentId: doc.id,
-              documentType: doc.type,
-              customTypeName: doc.customTypeName,
-              expiryDate: doc.expiryDate,
-              statusText,
-              statusVariant,
-              daysDiff: daysDifference,
-            });
+      if (latestDoc && latestDoc.expiryDate) {
+        const expiry = parseISO(latestDoc.expiryDate);
+        const daysDifference = differenceInDays(expiry, now);
+        const complianceStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
+
+        if (complianceStatus === 'Overdue' || complianceStatus === 'ExpiringSoon') {
+          let statusText = '';
+          let statusVariant: DocumentAlertItem['statusVariant'] = 'default';
+
+          if (complianceStatus === 'Overdue') {
+            statusText = `Overdue by ${Math.abs(daysDifference)} day(s)`;
+            statusVariant = 'destructive';
+          } else if (complianceStatus === 'ExpiringSoon') {
+            statusText = `Expires in ${daysDifference} day(s)`;
+            statusVariant = 'secondary';
           }
+          
+          items.push({
+            vehicleId: vehicle.id,
+            vehicleRegistration: vehicle.registrationNumber,
+            documentId: latestDoc.id, // ID of this specific document instance
+            documentType: latestDoc.type,
+            customTypeName: latestDoc.customTypeName,
+            expiryDate: latestDoc.expiryDate,
+            statusText,
+            statusVariant,
+            daysDiff: daysDifference,
+          });
         }
-      });
+      }
     });
-    return items.sort((a, b) => a.daysDiff - b.daysDiff);
+    return items.sort((a, b) => a.daysDiff - b.daysDiff); // Sort by urgency
   };
+  
+  const documentSections = DOCUMENT_TYPES.filter(type => type !== 'Other').map(docType => ({ // Exclude 'Other' from these specific dashboard sections for now
+    title: `${docType} Status`,
+    docType: docType,
+    items: processVehiclesForDocumentAlerts(allVehicles, docType),
+    icon: documentTypeIcons[docType] || documentTypeIcons.Generic,
+  }));
 
-  const insuranceAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'Insurance');
-  const fitnessAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'Fitness');
-  const pucAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'PUC');
-  const aitpAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'AITP');
-
-  const documentSections: { title: string; docType: DocumentType; items: DocumentAlertItem[]; icon: React.ElementType }[] = [
-    { title: "Insurance", docType: 'Insurance', items: insuranceAlertItems, icon: documentTypeIcons.Insurance },
-    { title: "Fitness Certificates", docType: 'Fitness', items: fitnessAlertItems, icon: documentTypeIcons.Fitness },
-    { title: "PUC Certificates", docType: 'PUC', items: pucAlertItems, icon: documentTypeIcons.PUC },
-    { title: "AITP Documents", docType: 'AITP', items: aitpAlertItems, icon: documentTypeIcons.AITP },
-  ];
 
   const chartData = stats?.vehicleComplianceBreakdown ? [
     { name: "Compliant", value: stats.vehicleComplianceBreakdown.compliant, fill: "var(--color-compliant)" },
@@ -160,23 +163,23 @@ export default function DashboardPage() {
         />
         <SummaryCard 
           title="Compliant Vehicles" 
-          value={`${stats.compliantVehicles} / ${stats.totalVehicles}`}
+          value={`${stats.vehicleComplianceBreakdown.compliant} / ${stats.totalVehicles}`}
           icon={CheckCircle}
-          description={`${stats.totalVehicles > 0 ? ((stats.compliantVehicles/stats.totalVehicles)*100).toFixed(0) : 0}% compliance`}
+          description={`${stats.totalVehicles > 0 ? ((stats.vehicleComplianceBreakdown.compliant/stats.totalVehicles)*100).toFixed(0) : 0}% fleet compliance`}
           iconClassName="text-green-500"
         />
         <SummaryCard 
-          title="Expiring Soon (Docs)" 
+          title="Expiring Soon (Active Docs)" 
           value={stats.expiringSoonDocuments} 
           icon={FileWarning}
-          description="Total documents needing attention"
+          description="Total active documents needing attention"
           iconClassName="text-yellow-500"
         />
         <SummaryCard 
-          title="Overdue (Docs)" 
+          title="Overdue (Active Docs)" 
           value={stats.overdueDocuments} 
           icon={ShieldAlert}
-          description="Total documents requiring immediate action"
+          description="Total active documents requiring immediate action"
           iconClassName="text-red-500"
         />
       </div>
@@ -251,14 +254,14 @@ export default function DashboardPage() {
 
 
       <div>
-        <h2 className="text-xl font-semibold font-headline mb-4">Detailed Document Status</h2>
+        <h2 className="text-xl font-semibold font-headline mb-4">Detailed Document Status - Action Required</h2>
         <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
           {documentSections.map(({ title, items, icon: Icon, docType }) => (
             <Card key={title} className="shadow-md">
               <CardHeader className="pb-3">
                 <CardTitle className="font-headline text-lg flex items-center">
                   <Icon className="mr-2 h-5 w-5 text-primary" />
-                  {title} - Action Required
+                  {title}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -276,7 +279,7 @@ export default function DashboardPage() {
                         {items.map(item => (
                           <TableRow key={item.documentId}>
                             <TableCell className="font-medium">
-                              <Link href={`/vehicles/${item.vehicleId}`} className="hover:underline text-primary">
+                              <Link href={`/vehicles/${item.vehicleId}?scrollToDoc=${item.documentId}`} className="hover:underline text-primary">
                                 {item.vehicleRegistration}
                               </Link>
                             </TableCell>
@@ -299,7 +302,7 @@ export default function DashboardPage() {
                     </Table>
                   </ScrollArea>
                 ) : (
-                  <p className="text-sm text-muted-foreground py-4 text-center">No upcoming or overdue {docType.toLowerCase()} documents.</p>
+                  <p className="text-sm text-muted-foreground py-4 text-center">All {docType.toLowerCase()} documents are compliant.</p>
                 )}
               </CardContent>
             </Card>
@@ -327,7 +330,7 @@ export default function DashboardPage() {
                   <AlertDescription className="text-xs">
                     {alert.message}
                     <div className="text-xs text-muted-foreground mt-1">
-                      {formatDistanceToNow(parseISO(alert.createdAt), { addSuffix: true })}
+                      Due: {format(parseISO(alert.dueDate), 'MMM dd, yyyy')} - created {formatDistanceToNow(parseISO(alert.createdAt), { addSuffix: true })}
                     </div>
                   </AlertDescription>
                 </Alert>
@@ -349,3 +352,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

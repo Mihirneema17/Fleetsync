@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -44,7 +45,7 @@ import { useToast } from '@/hooks/use-toast';
 const formSchema = z.object({
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]]),
   customTypeName: z.string().optional(),
-  expiryDate: z.date().nullable(),
+  expiryDate: z.date().nullable(), // Nullable if AI is to extract or not applicable
   documentFile: z.instanceof(File).optional().nullable(),
 }).refine(data => {
   if (data.documentType === 'Other') {
@@ -54,10 +55,6 @@ const formSchema = z.object({
 }, {
   message: "Custom type name is required for 'Other' document type.",
   path: ["customTypeName"],
-}).refine(data => {
-   // Expiry date is optional for initial upload if AI is to extract, but required if no file.
-   // For this form, we'll make it optional but a warning if no file or date.
-  return true; 
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -76,7 +73,7 @@ interface DocumentUploadModalProps {
     aiConfidence?: number | null
   ) => Promise<void>;
   vehicleId: string;
-  initialDocumentData?: Partial<VehicleDocument> | null;
+  initialDocumentData?: Partial<VehicleDocument> | { type: DocumentType, customTypeName?: string } | null; // Can be a partial doc for context or just type info
   extractExpiryDateFn: (input: ExtractExpiryDateInput) => Promise<ExtractExpiryDateOutput>;
 }
 
@@ -85,54 +82,46 @@ export function DocumentUploadModal({
   onClose,
   onSubmit,
   vehicleId,
-  initialDocumentData,
+  initialDocumentData, // This might just provide type context for a new historical entry
   extractExpiryDateFn,
 }: DocumentUploadModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExtractingDate, setIsExtractingDate] = useState(false);
-  const [filePreview, setFilePreview] = useState<string | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null); // For new file
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [aiExtractedDate, setAiExtractedDate] = useState<string | null>(null);
   const [aiConfidence, setAiConfidence] = useState<number | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // If initialDocumentData has an ID, it's a specific historical doc (though we add new).
+  // If it only has 'type', it's context for adding a new historical entry of that type.
+  const isEditingHistoricalEntry = !!(initialDocumentData && 'id' in initialDocumentData);
+  const modalTitle = "Upload New Document Version"; // Always adding new for history
+
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       documentType: initialDocumentData?.type || 'Insurance',
       customTypeName: initialDocumentData?.customTypeName || '',
-      expiryDate: initialDocumentData?.expiryDate ? parseISO(initialDocumentData.expiryDate) : null,
+      expiryDate: null, // Always null for new historical entry initially
       documentFile: null,
     },
   });
 
   useEffect(() => {
-    if (initialDocumentData) {
-      form.reset({
-        documentType: initialDocumentData.type || 'Insurance',
-        customTypeName: initialDocumentData.customTypeName || '',
-        expiryDate: initialDocumentData.expiryDate ? parseISO(initialDocumentData.expiryDate) : null,
-        documentFile: null, // File needs to be re-uploaded
-      });
-      setAiExtractedDate(initialDocumentData.aiExtractedDate || null);
-      setAiConfidence(initialDocumentData.aiConfidence || null);
-      setSelectedFile(null); // Reset file on modal open/data change
-      setFilePreview(initialDocumentData.documentUrl || null); // Show existing doc URL as preview if available
-      setAiError(null);
-    } else {
-       form.reset({
-        documentType: 'Insurance',
-        customTypeName: '',
-        expiryDate: null,
-        documentFile: null,
-      });
-      setAiExtractedDate(null);
-      setAiConfidence(null);
-      setSelectedFile(null);
-      setFilePreview(null);
-      setAiError(null);
-    }
+    // Reset form for new historical entry, but pre-fill type if provided
+    form.reset({
+      documentType: initialDocumentData?.type || 'Insurance',
+      customTypeName: initialDocumentData?.customTypeName || '',
+      expiryDate: null, // New historical entry, expiry set by user/AI
+      documentFile: null,
+    });
+    setAiExtractedDate(null);
+    setAiConfidence(null);
+    setSelectedFile(null);
+    setFilePreview(null); // No preview for new historical entry
+    setAiError(null);
   }, [initialDocumentData, form, isOpen]);
 
 
@@ -140,10 +129,10 @@ export function DocumentUploadModal({
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setFilePreview(URL.createObjectURL(file)); // For image/pdf preview, or just name
+      setFilePreview(URL.createObjectURL(file)); 
       form.setValue('documentFile', file);
       setAiError(null);
-      setAiExtractedDate(null);
+      setAiExtractedDate(null); // Reset AI fields on new file
       setAiConfidence(null);
       
       const currentDocType = form.getValues('documentType');
@@ -189,7 +178,7 @@ export function DocumentUploadModal({
       }
     } else {
       setSelectedFile(null);
-      setFilePreview(initialDocumentData?.documentUrl || null); // Revert to initial if file removed
+      setFilePreview(null); 
       form.setValue('documentFile', null);
     }
   };
@@ -197,6 +186,14 @@ export function DocumentUploadModal({
   const currentDocumentType = form.watch('documentType');
 
   const processSubmit = async (values: FormValues) => {
+    if (!selectedFile) {
+        toast({ title: "File Required", description: "Please select a document file to upload.", variant: "destructive"});
+        return;
+    }
+    if (!values.expiryDate) {
+        toast({ title: "Expiry Date Required", description: "Please set an expiry date for the document.", variant: "destructive"});
+        return;
+    }
     setIsSubmitting(true);
     await onSubmit(
       {
@@ -218,10 +215,10 @@ export function DocumentUploadModal({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="font-headline">
-            {initialDocumentData?.id ? 'Update Document' : 'Upload New Document'}
+            {modalTitle}
           </DialogTitle>
           <DialogDescription>
-            Fill in the details for the vehicle document. Fields marked with * are required.
+            Upload a new version or instance of this document. It will be added to the vehicle's history.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -235,18 +232,14 @@ export function DocumentUploadModal({
                   <Select 
                     onValueChange={(value) => {
                       field.onChange(value);
-                      // Reset AI fields if doc type changes
                       setAiExtractedDate(null);
                       setAiConfidence(null);
                       setAiError(null);
-                      // If a file is selected and new type is AI-supported, trigger extraction
-                      if (selectedFile && AI_SUPPORTED_DOCUMENT_TYPES.includes(value as DocumentType)) {
-                         // This would re-trigger useEffect or a direct call if encapsulated
-                         // For simplicity, user might need to re-select file or we can add a button
-                      }
+                      // Auto-trigger AI if file already selected might be complex here
+                      // User might need to re-select file if type changes and AI is desired
                     }} 
                     defaultValue={field.value}
-                    disabled={!!initialDocumentData?.id && initialDocumentData.type !== 'Other'} // Lock type if editing an existing non-other doc
+                    // Type can be changed when adding new historical entry, even if context was provided
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -285,18 +278,18 @@ export function DocumentUploadModal({
             <FormField
               control={form.control}
               name="documentFile"
-              render={({ field }) => ( // field is not directly used for Input type="file"
+              render={({ field }) => ( 
                 <FormItem>
-                  <FormLabel>{initialDocumentData?.documentUrl ? 'Replace Document (Optional)' : 'Document File *'}</FormLabel>
+                  <FormLabel>Document File *</FormLabel>
                   <FormControl>
                     <Input 
                       type="file" 
                       accept=".pdf,.jpg,.jpeg,.png" 
                       onChange={handleFileChange}
                       className="text-sm"
+                      required // File is always required for new historical entries
                     />
                   </FormControl>
-                  {!selectedFile && !initialDocumentData?.documentUrl && <FormDescription className="text-destructive">A document file is required for new uploads.</FormDescription>}
                   <FormMessage />
                 </FormItem>
               )}
@@ -306,11 +299,6 @@ export function DocumentUploadModal({
               <div className="text-sm text-muted-foreground">
                 Selected file: {selectedFile.name} ({ (selectedFile.size / 1024).toFixed(2) } KB)
               </div>
-            )}
-            {filePreview && !selectedFile && initialDocumentData?.documentUrl && (
-                <div className="text-sm">
-                    Current document: <a href={initialDocumentData.documentUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline">{initialDocumentData.documentName || 'View Document'}</a>
-                </div>
             )}
 
 
@@ -339,7 +327,7 @@ export function DocumentUploadModal({
               name="expiryDate"
               render={({ field }) => (
                 <FormItem className="flex flex-col">
-                  <FormLabel>Expiry Date</FormLabel>
+                  <FormLabel>Expiry Date *</FormLabel>
                   <Popover>
                     <PopoverTrigger asChild>
                       <FormControl>
@@ -364,14 +352,14 @@ export function DocumentUploadModal({
                         mode="single"
                         selected={field.value}
                         onSelect={field.onChange}
-                        disabled={(date) => date < new Date("1900-01-01") } // Example past disable
+                        disabled={(date) => date < new Date("1900-01-01") } 
                         initialFocus
                       />
                     </PopoverContent>
                   </Popover>
                   <FormDescription>
                     {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ? 
-                    'AI may suggest a date if a file is uploaded. Otherwise, select manually.' : 
+                    'AI may suggest a date. Please verify or set manually.' : 
                     'Select the expiry date manually.'}
                   </FormDescription>
                   <FormMessage />
@@ -383,9 +371,9 @@ export function DocumentUploadModal({
               <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting || isExtractingDate}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting || isExtractingDate || (!selectedFile && !initialDocumentData?.id) }>
+              <Button type="submit" disabled={isSubmitting || isExtractingDate || !selectedFile || !form.getValues('expiryDate') }>
                 {(isSubmitting || isExtractingDate) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {initialDocumentData?.id ? 'Update Document' : 'Add Document'}
+                Add to History
               </Button>
             </DialogFooter>
           </form>
@@ -394,3 +382,4 @@ export function DocumentUploadModal({
     </Dialog>
   );
 }
+

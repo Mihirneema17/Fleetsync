@@ -1,4 +1,5 @@
 
+
 "use client";
 import { notFound, useRouter } from 'next/navigation';
 import { getVehicleById, getDocumentComplianceStatus, addOrUpdateDocument } from '@/lib/data';
@@ -7,40 +8,38 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
+import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2, History } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
 import { DATE_FORMAT, AI_SUPPORTED_DOCUMENT_TYPES } from '@/lib/constants';
-import React, { useState, useEffect, use } from 'react'; // Added use
+import React, { useState, useEffect, use } from 'react';
 import { DocumentUploadModal } from '@/components/document/document-upload-modal';
 import { useToast } from '@/hooks/use-toast';
 import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
-// Page props can be a promise in some Next.js scenarios, especially with server-side aspects.
-// To align with Next.js guidance on unwrapping params, we'll handle it defensively.
+
 type VehicleDetailPageProps = {
   params: { id: string } | Promise<{ id: string }>;
 };
 
 export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailPageProps) {
-  // Use React.use to unwrap the params if it's a promise, as suggested by Next.js warnings.
-  // This pattern handles cases where props might be promises.
   const resolvedParams = typeof (paramsProp as Promise<{id: string}>)?.then === 'function' 
     ? use(paramsProp as Promise<{id: string}>) 
     : paramsProp as {id: string};
   
-  const { id: vehicleId } = resolvedParams; // Now destructure from resolved params
+  const { id: vehicleId } = resolvedParams;
 
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDocument, setEditingDocument] = useState<Partial<VehicleDocument> | null>(null);
+  // editingDocument now represents the *type* of document to add/renew, or a specific historical doc to view/correct (future)
+  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType } | null>(null);
   const router = useRouter();
   const { toast } = useToast();
 
   useEffect(() => {
-    // vehicleId is now guaranteed to be from resolved params
     if (vehicleId) {
       async function fetchVehicle() {
         setIsLoading(true);
@@ -54,7 +53,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
       }
       fetchVehicle();
     }
-  }, [vehicleId]); // vehicleId is stable after use() and destructuring
+  }, [vehicleId]);
 
   const getStatusConfig = (status: VehicleDocument['status']) => {
     switch (status) {
@@ -70,8 +69,11 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
     }
   };
 
-  const handleOpenUploadModal = (doc?: VehicleDocument) => {
-    setEditingDocument(doc || { type: 'Insurance' });
+  const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType }) => {
+    // If docContext has an ID, it means user clicked "Update" on a specific historical doc.
+    // For now, "Update" will still mean "Add new renewal for this type".
+    // If no docContext, it's "Upload Document" for a new type or first time.
+    setEditingDocumentContext(docContext || { type: 'Insurance' }); // Default to Insurance if fresh upload
     setIsModalOpen(true);
   };
 
@@ -87,6 +89,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
   ) => {
     if (!vehicle) return;
     try {
+      // addOrUpdateDocument now always adds a new document, creating history
       const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
         type: data.documentType,
         customTypeName: data.customTypeName,
@@ -96,13 +99,13 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
         aiConfidence,
       });
       if (updatedVehicle) {
-        setVehicle(updatedVehicle);
-        toast({ title: 'Success', description: `Document ${editingDocument?.id ? 'updated' : 'added'} successfully.` });
+        setVehicle(updatedVehicle); // Refresh vehicle data on page
+        toast({ title: 'Success', description: `Document for ${data.documentType} added successfully.` });
       } else {
         throw new Error('Failed to update vehicle from server');
       }
       setIsModalOpen(false);
-      setEditingDocument(null);
+      setEditingDocumentContext(null);
       router.refresh(); 
     } catch (error) {
       console.error('Failed to submit document:', error);
@@ -117,6 +120,20 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
       </div>
     );
+  }
+
+  // Group documents by type for display
+  const documentsByType: Record<string, VehicleDocument[]> = {};
+  vehicle.documents.forEach(doc => {
+    const key = doc.type === 'Other' && doc.customTypeName ? `${doc.type} (${doc.customTypeName})` : doc.type;
+    if (!documentsByType[key]) {
+      documentsByType[key] = [];
+    }
+    documentsByType[key].push(doc);
+  });
+  // Sort documents within each group by uploadedAt descending (newest first)
+  for (const key in documentsByType) {
+    documentsByType[key].sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime());
   }
 
 
@@ -135,7 +152,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                 <Button variant="outline"><Edit className="mr-2 h-4 w-4" /> Edit Vehicle</Button>
             </Link>
             <Button onClick={() => handleOpenUploadModal()}>
-                <UploadCloud className="mr-2 h-4 w-4" /> Upload Document
+                <UploadCloud className="mr-2 h-4 w-4" /> Upload New Document
             </Button>
         </div>
       </div>
@@ -156,64 +173,77 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
 
       <Card className="shadow-md">
         <CardHeader>
-          <CardTitle className="font-headline">Compliance Documents</CardTitle>
-          <CardDescription>Manage and track expiry dates for all essential documents.</CardDescription>
+          <CardTitle className="font-headline flex items-center"><History className="mr-2 h-5 w-5" />Compliance Document History</CardTitle>
+          <CardDescription>View and manage all historical and current documents for this vehicle.</CardDescription>
         </CardHeader>
         <CardContent>
-          {vehicle.documents.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Document Type</TableHead>
-                  <TableHead>Expiry Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {vehicle.documents.map((doc) => {
-                  const status = getDocumentComplianceStatus(doc.expiryDate); 
-                  const config = getStatusConfig(status);
-                  const StatusIcon = config.icon;
-                  return (
-                    <TableRow key={doc.id} className={cn(config.bgColor?.replace('bg-','hover:bg-opacity-80 hover:'), doc.status === "Missing" ? "opacity-60" : "")}>
-                      <TableCell className="font-medium">
-                        <FileText className="inline mr-2 h-4 w-4 text-muted-foreground" />
-                        {doc.type === 'Other' && doc.customTypeName ? doc.customTypeName : doc.type}
-                      </TableCell>
-                      <TableCell>
-                        {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : (
-                          <span className="text-muted-foreground italic">Not Set</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={config.badgeVariant} className={cn(
-                           status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
-                           status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
-                        )}>
-                          <StatusIcon className={cn("mr-1 h-3 w-3", config.color)} />
-                          {status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" className="mr-2" onClick={() => handleOpenUploadModal(doc)}>
-                           <UploadCloud className="mr-1 h-4 w-4" /> {doc.expiryDate ? 'Update' : 'Upload'}
-                        </Button>
-                        {doc.documentUrl && (
-                          <Button variant="link" size="sm" asChild>
-                            <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer">View</a>
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+          {vehicle.documents.filter(d => d.status !== 'Missing' || d.expiryDate).length > 0 ? ( // Show table if there are actual docs, not just placeholders
+            Object.entries(documentsByType).map(([docTypeKey, docs]) => (
+              <div key={docTypeKey} className="mb-6">
+                <h3 className="text-md font-semibold mb-2 capitalize border-b pb-1">{docTypeKey.toLowerCase()}</h3>
+                <ScrollArea className={cn("max-h-[400px]", docs.length > 4 ? "h-[400px]" : "")}>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[25%]">Uploaded At</TableHead>
+                        <TableHead className="w-[25%]">Expiry Date</TableHead>
+                        <TableHead className="w-[20%]">Status</TableHead>
+                        <TableHead className="w-[15%]">AI Date</TableHead>
+                        <TableHead className="text-right w-[15%]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {docs.map((doc) => {
+                        const status = getDocumentComplianceStatus(doc.expiryDate); 
+                        const config = getStatusConfig(status);
+                        const StatusIcon = config.icon;
+                        return (
+                          <TableRow key={doc.id} className={cn(config.bgColor?.replace('bg-','hover:bg-opacity-80 hover:'), doc.status === "Missing" && !doc.expiryDate ? "opacity-50" : "")}>
+                            <TableCell className="text-xs">
+                                {format(parseISO(doc.uploadedAt), `${DATE_FORMAT} HH:mm`)}
+                                {doc.documentName && <p className="text-muted-foreground truncate max-w-[150px] text-[10px]">{doc.documentName}</p>}
+                            </TableCell>
+                            <TableCell>
+                              {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : (
+                                <span className="text-muted-foreground italic">Not Set</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={config.badgeVariant} className={cn(
+                                status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
+                                status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
+                              )}>
+                                <StatusIcon className={cn("mr-1 h-3 w-3", config.color)} />
+                                {status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs">
+                                {doc.aiExtractedDate ? format(parseISO(doc.aiExtractedDate), DATE_FORMAT) : '-'}
+                                {doc.aiConfidence && <span className="block text-muted-foreground text-[10px]">Conf: {doc.aiConfidence.toFixed(2)}</span>}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="outline" size="sm" className="mr-2 text-xs h-7" onClick={() => handleOpenUploadModal({ type: doc.type, customTypeName: doc.customTypeName })}>
+                                 <UploadCloud className="mr-1 h-3 w-3" /> Add New
+                              </Button>
+                              {doc.documentUrl && (
+                                <Button variant="link" size="sm" asChild className="text-xs p-0 h-7">
+                                  <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer">View Doc</a>
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              </div>
+            ))
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               <FileText className="mx-auto h-12 w-12 mb-4" />
               <p>No documents uploaded for this vehicle yet.</p>
+              <p>Click "Upload New Document" to add the first one.</p>
             </div>
           )}
         </CardContent>
@@ -222,13 +252,15 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
       {isModalOpen && vehicle && (
         <DocumentUploadModal
           isOpen={isModalOpen}
-          onClose={() => { setIsModalOpen(false); setEditingDocument(null); }}
+          onClose={() => { setIsModalOpen(false); setEditingDocumentContext(null); }}
           onSubmit={handleDocumentSubmit}
           vehicleId={vehicle.id}
-          initialDocumentData={editingDocument}
+          // Pass the type from context, or a default if adding completely new
+          initialDocumentData={editingDocumentContext}
           extractExpiryDateFn={extractExpiryDate}
         />
       )}
     </div>
   );
 }
+
