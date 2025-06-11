@@ -63,8 +63,9 @@ async function internalLogAuditEvent(
   entityRegistration?: string
 ) {
   try {
+    const newAuditLogId = generateId();
     await addDoc(collection(db, 'auditLogs'), {
-      id: generateId(), // Assigning ID for consistency, though Firestore auto-generates one
+      id: newAuditLogId, 
       timestamp: Timestamp.now(),
       userId: MOCK_USER_ID,
       action,
@@ -79,78 +80,72 @@ async function internalLogAuditEvent(
 }
 
 // --- Alerts ---
-// This function receives a vehicle object and processes its documents to create alerts in Firestore.
-// It does not re-fetch the vehicle from Firestore.
 async function generateAlertsForVehicle(vehicle: Vehicle) {
   if (!vehicle || !vehicle.id) {
     console.error("generateAlertsForVehicle: Invalid vehicle object provided.", vehicle);
     return;
   }
-  const alertsColRef = collection(db, "alerts");
+  try {
+    const alertsColRef = collection(db, "alerts");
 
-  // First, potentially clear existing unread alerts for this vehicle to avoid duplicates if a document is updated.
-  // This is a simple approach; more complex logic might be needed to avoid deleting alerts for different documents.
-  // For now, we'll focus on creating new ones if needed. A more robust solution would involve matching on documentId too.
-  const existingUnreadAlertsQuery = query(alertsColRef,
-    where('vehicleId', '==', vehicle.id),
-    where('isRead', '==', false)
-  );
-  const existingUnreadAlertsSnap = await getDocs(existingUnreadAlertsQuery);
-  const batch = writeBatch(db);
-  existingUnreadAlertsSnap.forEach(alertDoc => {
-      // Simple strategy: delete all unread alerts for the vehicle and regenerate.
-      // This avoids complex matching but might re-create alerts unnecessarily if only one of many docs changed.
-      // A more fine-grained approach would match on specific document details.
-      batch.delete(alertDoc.ref);
-  });
-  await batch.commit();
+    const existingUnreadAlertsQuery = query(alertsColRef,
+      where('vehicleId', '==', vehicle.id),
+      where('isRead', '==', false)
+    );
+    const existingUnreadAlertsSnap = await getDocs(existingUnreadAlertsQuery);
+    const batch = writeBatch(db);
+    existingUnreadAlertsSnap.forEach(alertDoc => {
+        batch.delete(alertDoc.ref);
+    });
+    await batch.commit();
 
+    const uniqueDocTypesToConsider = new Set<string>();
+    (vehicle.documents || []).forEach(doc => {
+      if (doc.expiryDate) { 
+        if (doc.type === 'Other' && doc.customTypeName) {
+          uniqueDocTypesToConsider.add(`Other:${doc.customTypeName}`);
+        } else if (doc.type !== 'Other') {
+          uniqueDocTypesToConsider.add(doc.type);
+        }
+      }
+    });
 
-  const uniqueDocTypesToConsider = new Set<string>();
-  (vehicle.documents || []).forEach(doc => {
-    if (doc.expiryDate) { // Only consider documents that have an expiry date for alert generation
-      if (doc.type === 'Other' && doc.customTypeName) {
-        uniqueDocTypesToConsider.add(`Other:${doc.customTypeName}`);
-      } else if (doc.type !== 'Other') {
-        uniqueDocTypesToConsider.add(doc.type);
+    for (const typeKey of uniqueDocTypesToConsider) {
+      let docType: DocumentType;
+      let customTypeNameForLookup: string | undefined;
+
+      if (typeKey.startsWith('Other:')) {
+        docType = 'Other';
+        customTypeNameForLookup = typeKey.substring(6);
+      } else {
+        docType = typeKey as DocumentType;
+      }
+      
+      const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeNameForLookup);
+
+      if (latestDoc && latestDoc.expiryDate) {
+        const currentStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
+        if (currentStatus === 'ExpiringSoon' || currentStatus === 'Overdue') {
+          const newAlertId = generateId();
+          await addDoc(alertsColRef, {
+            id: newAlertId,
+            vehicleId: vehicle.id,
+            vehicleRegistration: vehicle.registrationNumber,
+            documentType: latestDoc.type,
+            customDocumentTypeName: latestDoc.customTypeName,
+            policyNumber: latestDoc.policyNumber,
+            dueDate: latestDoc.expiryDate,
+            message: `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate!), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate!), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`,
+            createdAt: Timestamp.now(),
+            isRead: false,
+            userId: MOCK_USER_ID,
+          });
+        }
       }
     }
-  });
-
-  for (const typeKey of uniqueDocTypesToConsider) {
-    let docType: DocumentType;
-    let customTypeNameForLookup: string | undefined;
-
-    if (typeKey.startsWith('Other:')) {
-      docType = 'Other';
-      customTypeNameForLookup = typeKey.substring(6);
-    } else {
-      docType = typeKey as DocumentType;
-    }
-    
-    const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeNameForLookup);
-
-    if (latestDoc && latestDoc.expiryDate) {
-      const currentStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
-      if (currentStatus === 'ExpiringSoon' || currentStatus === 'Overdue') {
-        // Note: The previous check for existing alerts was removed to simplify.
-        // The batch delete above handles clearing previous unread alerts for the vehicle.
-        // This means if a doc goes from Overdue to ExpiringSoon (e.g., corrected date), a new alert is made.
-        await addDoc(alertsColRef, {
-          id: generateId(),
-          vehicleId: vehicle.id,
-          vehicleRegistration: vehicle.registrationNumber,
-          documentType: latestDoc.type,
-          customDocumentTypeName: latestDoc.customTypeName,
-          policyNumber: latestDoc.policyNumber,
-          dueDate: latestDoc.expiryDate,
-          message: `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate!), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate!), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`,
-          createdAt: Timestamp.now(),
-          isRead: false,
-          userId: MOCK_USER_ID,
-        });
-      }
-    }
+  } catch (error) {
+    console.error(`Error during background alert generation for vehicle ${vehicle.id}:`, error);
+    // Optionally, log this to a more persistent error tracking service
   }
 }
 
@@ -163,7 +158,7 @@ export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
   }
   qParams.push(orderBy('createdAt', 'desc'));
   
-  const q = query.apply(null, qParams as any); // Use apply to pass array of args
+  const q = query.apply(null, qParams as any); 
   
   const alertSnapshot = await getDocs(q);
   return alertSnapshot.docs.map(docSnap => {
@@ -172,7 +167,7 @@ export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
       id: docSnap.id,
       ...data,
       createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : data.createdAt,
-      dueDate: data.dueDate, // Should be ISO string
+      dueDate: data.dueDate, 
     } as Alert;
   });
 }
@@ -208,7 +203,6 @@ export async function getVehicles(): Promise<Vehicle[]> {
       updatedAt: (data.updatedAt as Timestamp)?.toDate ? formatISO((data.updatedAt as Timestamp).toDate()) : data.updatedAt,
       documents: (data.documents || []).map((doc: any) => ({
         ...doc,
-        // Ensure nested dates are also strings if they were Timestamps, though they should be ISO strings already
         startDate: doc.startDate,
         expiryDate: doc.expiryDate,
         uploadedAt: doc.uploadedAt,
@@ -263,13 +257,13 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
     if (docType !== 'Other') {
       initialDocuments.push({
         id: generateId(),
-        vehicleId: '', // Will be set post-creation if needed for direct query, but embedded here
+        vehicleId: '', 
         type: docType,
         customTypeName: undefined,
         policyNumber: null,
         startDate: null,
         expiryDate: null,
-        status: 'Missing', // Initial status
+        status: 'Missing', 
         uploadedAt: nowISO,
         documentName: undefined,
         documentUrl: undefined,
@@ -289,13 +283,16 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const newVehicleForReturn: Vehicle = {
     ...vehicleData,
     id: docRef.id,
-    documents: initialDocuments.map(d => ({...d, vehicleId: docRef.id})), // Add vehicleId to embedded docs
+    documents: initialDocuments.map(d => ({...d, vehicleId: docRef.id})), 
     createdAt: nowISO,
     updatedAt: nowISO,
   };
 
-  await internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
-  await generateAlertsForVehicle(newVehicleForReturn); // Generate alerts for the new vehicle
+  internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
+  
+  // Fire-and-forget alert generation
+  generateAlertsForVehicle(newVehicleForReturn)
+    .catch(err => console.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
 
   return newVehicleForReturn;
 }
@@ -324,7 +321,9 @@ export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, '
   
   const updatedVehicle = await getVehicleById(id);
   if (updatedVehicle) {
-    await generateAlertsForVehicle(updatedVehicle); // Generate alerts for the updated vehicle
+    // Fire-and-forget alert generation
+    generateAlertsForVehicle(updatedVehicle)
+      .catch(err => console.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id}:`, err));
   }
   return updatedVehicle;
 }
@@ -342,7 +341,7 @@ export async function deleteVehicle(id: string): Promise<boolean> {
   const q = query(alertsCol, where('vehicleId', '==', id));
   const alertSnapshot = await getDocs(q);
   const batch = writeBatch(db);
-  alertSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+  alertSnapshot.docs.forEach(docSnap => batch.delete(docSnap.ref));
   await batch.commit();
 
   internalLogAuditEvent('DELETE_VEHICLE', 'VEHICLE', id, { registrationNumber: vehicleToDeleteData.registrationNumber }, vehicleToDeleteData.registrationNumber);
@@ -440,7 +439,9 @@ export async function addOrUpdateDocument(
   
   const finalUpdatedVehicle = await getVehicleById(vehicleId);
   if (finalUpdatedVehicle) {
-    await generateAlertsForVehicle(finalUpdatedVehicle);
+     // Fire-and-forget alert generation
+    generateAlertsForVehicle(finalUpdatedVehicle)
+      .catch(err => console.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id}:`, err));
   }
   return finalUpdatedVehicle;
 }
@@ -461,8 +462,8 @@ export async function getSummaryStats(): Promise<SummaryStats> {
       Fitness: { expiring: 0, overdue: 0 },
       PUC: { expiring: 0, overdue: 0 },
       AITP: { expiring: 0, overdue: 0 },
-      Other: { expiring: 0, overdue: 0 }, // For generic 'Other' without specific custom type for summary
-      OtherCustom: { expiring: 0, overdue: 0 }, // Aggregates all custom 'Other' types
+      Other: { expiring: 0, overdue: 0 }, 
+      OtherCustom: { expiring: 0, overdue: 0 }, 
   });
   const docTypeCounts = docTypeStatsTemplate();
 
@@ -478,7 +479,7 @@ export async function getSummaryStats(): Promise<SummaryStats> {
 
     const uniqueActiveDocTypesInVehicle = new Set<string>();
      (vehicle.documents || []).forEach(doc => {
-        if (doc.expiryDate) { // Only consider active documents with expiry for these counts
+        if (doc.expiryDate) { 
             if (doc.type === 'Other' && doc.customTypeName) {
                 uniqueActiveDocTypesInVehicle.add(`Other:${doc.customTypeName}`);
             } else if (doc.type !== 'Other') {
@@ -495,8 +496,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
         const latestDoc = getLatestDocumentForType(vehicle, docTypeForLookup, customTypeNameForLookup);
         if (latestDoc && latestDoc.expiryDate) {
             const status = getDocumentComplianceStatus(latestDoc.expiryDate);
-            // Use 'OtherCustom' for any 'Other' type with a custom name for summary, 
-            // or the specific type otherwise.
             const countKey = latestDoc.type === 'Other' && latestDoc.customTypeName ? 'OtherCustom' : latestDoc.type;
             
             if (status === 'ExpiringSoon') {
@@ -537,20 +536,17 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
       const latestEssentialDoc = getLatestDocumentForType(vehicle, essentialType);
       if (!latestEssentialDoc || !latestEssentialDoc.expiryDate) {
           hasAllEssentialsWithExpiry = false;
-          // continue; // Don't break, still check other essential docs for overdue/expiring
       } else {
         essentialDocsPresentAndActive++;
       }
   }
   
   const activeDocs = (vehicle.documents || []).filter(d => d.expiryDate);
-  // If no documents AT ALL (not even placeholders), or no active documents AND essentials are missing
   if (activeDocs.length === 0 && !hasAllEssentialsWithExpiry && essentialDocsPresentAndActive < ESSENTIAL_DOC_TYPES.length) {
     return 'MissingInfo';
   }
 
-
-  for (const doc of activeDocs) { // Check all active documents, not just essentials for overdue/expiring
+  for (const doc of activeDocs) { 
     const status = getDocumentComplianceStatus(doc.expiryDate);
     if (status === 'Overdue') isOverdue = true;
     if (status === 'ExpiringSoon') isExpiringSoon = true;
@@ -558,7 +554,7 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
 
   if (isOverdue) return 'Overdue';
   if (isExpiringSoon) return 'ExpiringSoon';
-  if (!hasAllEssentialsWithExpiry) return 'MissingInfo'; // If any essential doc is missing expiry
+  if (!hasAllEssentialsWithExpiry) return 'MissingInfo'; 
   return 'Compliant';
 };
 
@@ -577,11 +573,6 @@ export async function getAuditLogs(filters?: {
   if (filters?.userId) queryConstraints.unshift(where('userId', '==', filters.userId));
   if (filters?.entityType) queryConstraints.unshift(where('entityType', '==', filters.entityType));
   if (filters?.action) queryConstraints.unshift(where('action', '==', filters.action));
-  
-  // Date filters need to be handled carefully if combined with other equality filters on different fields or multiple inequalities
-  // For simplicity, if date filters are present, they might be the primary compound filter with timestamp.
-  // Firestore has limitations on complex compound queries.
-  // This implementation assumes simple filtering or that appropriate indexes are set up.
   
   if (filters?.dateFrom) {
     const fromDate = parseISO(filters.dateFrom);
@@ -611,7 +602,7 @@ export async function recordCsvExportAudit(reportName: string, formatUsed: strin
   await internalLogAuditEvent('EXPORT_REPORT', 'REPORT', undefined, {
     reportName,
     format: formatUsed,
-    filtersApplied: filtersApplied ? JSON.parse(JSON.stringify(filtersApplied, (key, value) => value instanceof Date ? value.toISOString() : value)) : {}, // Sanitize for Firestore
+    filtersApplied: filtersApplied ? JSON.parse(JSON.stringify(filtersApplied, (key, value) => value instanceof Date ? value.toISOString() : value)) : {},
   });
 }
 
@@ -642,7 +633,7 @@ export async function getReportableDocuments(
   allVehicles.forEach(vehicle => {
     const latestActiveDocsMap = new Map<string, VehicleDocument>();
     (vehicle.documents || []).forEach(doc => {
-      if (doc.expiryDate) { // Consider only docs with expiry for "active" status
+      if (doc.expiryDate) { 
         const typeKey = doc.type === 'Other' && doc.customTypeName ? `Other:${doc.customTypeName}` : doc.type;
         const existingLatest = latestActiveDocsMap.get(typeKey);
         if (!existingLatest || parseISO(doc.expiryDate!) > parseISO(existingLatest.expiryDate!) || 
@@ -654,17 +645,14 @@ export async function getReportableDocuments(
     
     DOCUMENT_TYPES.forEach(expectedDocType => {
         if (expectedDocType === 'Other') {
-            // For 'Other', only report what's explicitly present or if an 'Other' type has all versions expired.
             const otherDocsOfCustomTypes = (vehicle.documents || []).filter(d => d.type === 'Other' && d.customTypeName);
             const uniqueCustomNames = Array.from(new Set(otherDocsOfCustomTypes.map(d => d.customTypeName)));
             uniqueCustomNames.forEach(customName => {
                 if (customName && !latestActiveDocsMap.has(`Other:${customName}`)) {
-                    // This custom 'Other' type has no active (future expiry) document.
-                    // Check if there were any documents of this custom type at all.
                     const allVersionsOfThisCustomType = otherDocsOfCustomTypes.filter(d => d.customTypeName === customName);
-                    if (allVersionsOfThisCustomType.length > 0) { // If it existed but none are active
+                    if (allVersionsOfThisCustomType.length > 0) { 
                         const mostRecentVersion = allVersionsOfThisCustomType.sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime())[0];
-                        const status = getDocumentComplianceStatus(mostRecentVersion.expiryDate); // usually 'Overdue' or 'Missing' if expiry was null
+                        const status = getDocumentComplianceStatus(mostRecentVersion.expiryDate); 
                         let passesFilters = true;
                         if (filters?.statuses && filters.statuses.length > 0 && !filters.statuses.includes(status)) passesFilters = false;
                         if (filters?.documentTypes && filters.documentTypes.length > 0 && !filters.documentTypes.includes('Other')) passesFilters = false;
@@ -681,10 +669,8 @@ export async function getReportableDocuments(
                     }
                 }
             });
-        } else { // For standard document types
+        } else { 
             if (!latestActiveDocsMap.has(expectedDocType)) {
-                // This standard type has no active document.
-                // We need to find if there was a 'Missing' placeholder or any past version.
                 const missingPlaceholder = (vehicle.documents || []).find(d => d.type === expectedDocType && d.status === 'Missing' && !d.expiryDate);
                 if (missingPlaceholder) {
                      const status = 'Missing';
@@ -701,11 +687,10 @@ export async function getReportableDocuments(
                         });
                      }
                 } else {
-                    // If no placeholder, check if all versions are expired (implicitly making it "Missing" in effect)
                     const allVersionsOfThisType = (vehicle.documents || []).filter(d => d.type === expectedDocType);
                     if (allVersionsOfThisType.length > 0 && allVersionsOfThisType.every(d => !d.expiryDate || getDocumentComplianceStatus(d.expiryDate) === 'Overdue')) {
                         const mostRecentVersion = allVersionsOfThisType.sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime())[0];
-                         const status = 'Missing'; // Effectively missing if all are overdue
+                         const status = 'Missing'; 
                          let passesFilters = true;
                          if (filters?.statuses && filters.statuses.length > 0 && !filters.statuses.includes(status)) passesFilters = false;
                          if (filters?.documentTypes && filters.documentTypes.length > 0 && !filters.documentTypes.includes(expectedDocType)) passesFilters = false;
@@ -726,10 +711,9 @@ export async function getReportableDocuments(
 
     latestActiveDocsMap.forEach(doc => {
       const status = getDocumentComplianceStatus(doc.expiryDate);
-      let daysDiff = -Infinity; // Default for no expiry date
-      if (doc.expiryDate) { // Should always be true for docs in latestActiveDocsMap
+      let daysDiff = -Infinity; 
+      if (doc.expiryDate) { 
         const expDate = parseISO(doc.expiryDate);
-        // expDate.setHours(23,59,59,999); // Ensure end of day for comparison
         daysDiff = differenceInDays(expDate, now);
       }
       let passesFilters = true;
@@ -752,9 +736,6 @@ export async function getReportableDocuments(
     const statusDiff = statusOrderValue(a.status) - statusOrderValue(b.status);
     if (statusDiff !== 0) return statusDiff;
     
-    // For 'Overdue' and 'ExpiringSoon', sort by daysDifference (ascending - closest to/furthest past due date first)
-    // For 'Missing', daysDifference is -Infinity, so they group together.
-    // For 'Compliant', sort by daysDifference (descending - furthest expiry date first)
     let daysDiffCompare = 0;
     if(a.status === 'Compliant' && b.status === 'Compliant') {
         daysDiffCompare = b.daysDifference - a.daysDifference; 
@@ -766,5 +747,3 @@ export async function getReportableDocuments(
     return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
   });
 }
-
-    
