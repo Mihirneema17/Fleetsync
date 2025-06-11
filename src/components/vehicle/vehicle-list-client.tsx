@@ -2,7 +2,7 @@
 "use client"; 
 
 import Link from 'next/link';
-import { Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2, PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
