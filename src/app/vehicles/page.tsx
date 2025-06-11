@@ -1,8 +1,8 @@
 
-"use client"; // Required for useState, AlertDialog, and client-side interactions
+"use client"; 
 
 import Link from 'next/link';
-import { PlusCircle, Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2 } from 'lucide-react';
+import { PlusCircle, Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -42,6 +42,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useToast } from "@/hooks/use-toast";
 import { handleDeleteVehicleServerAction } from './actions';
 
@@ -70,21 +71,33 @@ const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' |
 
 
 export default function VehiclesPage() {
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehiclesByType, setVehiclesByType] = useState<Record<string, Vehicle[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, startDeleteTransition] = useTransition();
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isConfirmDeleteDialogOpen, setIsConfirmDeleteDialogOpen] = useState(false);
+  const [openAccordionItems, setOpenAccordionItems] = useState<string[]>([]);
   const { toast } = useToast();
 
+  const fetchAndGroupVehicles = async () => {
+    setIsLoading(true);
+    const fetchedVehicles = await getVehicles();
+    const grouped: Record<string, Vehicle[]> = {};
+    fetchedVehicles.forEach(vehicle => {
+      const typeKey = vehicle.type || 'Uncategorized';
+      if (!grouped[typeKey]) {
+        grouped[typeKey] = [];
+      }
+      grouped[typeKey].push(vehicle);
+    });
+    setVehiclesByType(grouped);
+    // By default, open the first few groups or all if less than a few
+    setOpenAccordionItems(Object.keys(grouped).slice(0, 3)); 
+    setIsLoading(false);
+  };
+  
   useEffect(() => {
-    async function fetchVehicles() {
-      setIsLoading(true);
-      const fetchedVehicles = await getVehicles();
-      setVehicles(fetchedVehicles);
-      setIsLoading(false);
-    }
-    fetchVehicles();
+    fetchAndGroupVehicles();
   }, []);
 
   const handleDeleteClick = (vehicle: Vehicle) => {
@@ -99,9 +112,7 @@ export default function VehiclesPage() {
       const result = await handleDeleteVehicleServerAction(vehicleToDelete.id);
       if (result.success) {
         toast({ title: "Vehicle Deleted", description: `Vehicle ${vehicleToDelete.registrationNumber} has been deleted.` });
-        // Refresh data
-        const updatedVehicles = await getVehicles();
-        setVehicles(updatedVehicles);
+        fetchAndGroupVehicles(); // Re-fetch and re-group
       } else {
         toast({ title: "Error", description: result.error, variant: "destructive" });
       }
@@ -119,6 +130,7 @@ export default function VehiclesPage() {
     );
   }
 
+  const totalVehicles = Object.values(vehiclesByType).reduce((sum, list) => sum + list.length, 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -132,7 +144,7 @@ export default function VehiclesPage() {
         </Link>
       </div>
 
-      {vehicles.length === 0 ? (
+      {totalVehicles === 0 ? (
         <Card className="flex flex-col items-center justify-center py-12 text-center">
             <Car className="w-20 h-20 text-muted-foreground mb-6" />
             <CardTitle className="text-2xl font-semibold mb-2 font-headline">No Vehicles Found</CardTitle>
@@ -149,70 +161,89 @@ export default function VehiclesPage() {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle>Vehicle Fleet</CardTitle>
-            <CardDescription>A list of all vehicles in your fleet ({vehicles.length} total).</CardDescription>
+            <CardTitle>Vehicle Fleet Overview</CardTitle>
+            <CardDescription>
+              {totalVehicles} vehicle(s) grouped by type. Click on a type to expand.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Registration No.</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Make & Model</TableHead>
-                  <TableHead>Compliance Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {vehicles.map((vehicle) => {
-                  const statusInfo = getOverallVehicleStatusBadge(vehicle);
-                  const StatusIcon = statusInfo.icon;
-                  return (
-                    <TableRow key={vehicle.id}>
-                      <TableCell className="font-medium">{vehicle.registrationNumber}</TableCell>
-                      <TableCell>{vehicle.type}</TableCell>
-                      <TableCell>{vehicle.make} {vehicle.model}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusInfo.variant} className={cn(
-                          statusInfo.status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
-                          statusInfo.status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
-                        )}>
-                          <StatusIcon className="mr-1 h-3 w-3" />
-                          {statusInfo.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
-                              <span className="sr-only">Open menu</span>
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem asChild>
-                              <Link href={`/vehicles/${vehicle.id}`}>View Details</Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem asChild>
-                               <Link href={`/vehicles/${vehicle.id}/edit`}>Edit Vehicle</Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-red-600 hover:!bg-red-500 hover:!text-white focus:!bg-red-500 focus:!text-white"
-                              onClick={() => handleDeleteClick(vehicle)}
-                              disabled={isDeleting}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete Vehicle
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <Accordion 
+                type="multiple" 
+                value={openAccordionItems}
+                onValueChange={setOpenAccordionItems}
+                className="w-full"
+            >
+              {Object.entries(vehiclesByType).sort(([typeA], [typeB]) => typeA.localeCompare(typeB)).map(([type, vehicleList]) => (
+                <AccordionItem value={type} key={type}>
+                  <AccordionTrigger className="text-lg font-semibold hover:no-underline px-1 py-3">
+                    <div className="flex items-center gap-2">
+                        <Car className="h-5 w-5 text-primary"/> 
+                        {type} ({vehicleList.length})
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-0 pb-2">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Registration No.</TableHead>
+                          <TableHead>Make & Model</TableHead>
+                          <TableHead>Compliance Status</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {vehicleList.map((vehicle) => {
+                          const statusInfo = getOverallVehicleStatusBadge(vehicle);
+                          const StatusIcon = statusInfo.icon;
+                          return (
+                            <TableRow key={vehicle.id}>
+                              <TableCell className="font-medium">{vehicle.registrationNumber}</TableCell>
+                              <TableCell>{vehicle.make} {vehicle.model}</TableCell>
+                              <TableCell>
+                                <Badge variant={statusInfo.variant} className={cn(
+                                  statusInfo.status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
+                                  statusInfo.status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
+                                )}>
+                                  <StatusIcon className="mr-1 h-3 w-3" />
+                                  {statusInfo.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" className="h-8 w-8 p-0">
+                                      <span className="sr-only">Open menu</span>
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem asChild>
+                                      <Link href={`/vehicles/${vehicle.id}`}>View Details</Link>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem asChild>
+                                      <Link href={`/vehicles/${vehicle.id}/edit`}>Edit Vehicle</Link>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-red-600 hover:!bg-red-500 hover:!text-white focus:!bg-red-500 focus:!text-white"
+                                      onClick={() => handleDeleteClick(vehicle)}
+                                      disabled={isDeleting}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete Vehicle
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
           </CardContent>
         </Card>
       )}

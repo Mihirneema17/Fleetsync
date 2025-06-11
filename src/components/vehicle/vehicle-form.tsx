@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,16 +15,9 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import type { Vehicle } from "@/lib/types";
-import { VEHICLE_TYPES } from "@/lib/constants";
+import type { Vehicle, VehicleType } from "@/lib/types"; // VehicleType is now string
+import { VEHICLE_TYPES } from "@/lib/constants"; // This is now a list of suggestions
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
@@ -31,9 +25,7 @@ import React from "react";
 
 const vehicleFormSchema = z.object({
   registrationNumber: z.string().min(3, "Registration number must be at least 3 characters.").max(20),
-  type: z.enum(VEHICLE_TYPES as [string, ...string[]], {
-    required_error: "Vehicle type is required.",
-  }),
+  type: z.string().min(2, "Vehicle type must be at least 2 characters.").max(50), // Changed from enum to string
   make: z.string().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().min(1, "Model must be at least 1 character.").max(50),
 });
@@ -60,7 +52,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       }
     : {
         registrationNumber: "",
-        type: undefined, // Or a default like 'Car'
+        type: "", 
         make: "",
         model: "",
       };
@@ -78,8 +70,8 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
         title: isEditing ? "Vehicle Updated" : "Vehicle Added",
         description: `Vehicle ${data.registrationNumber} has been successfully ${isEditing ? 'updated' : 'added'}.`,
       });
-      router.push("/vehicles"); // Or to the vehicle's detail page
-      router.refresh(); // Ensure the list is updated
+      router.push("/vehicles"); 
+      router.refresh(); 
     } catch (error) {
       toast({
         title: "Error",
@@ -123,21 +115,21 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Vehicle Type</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select vehicle type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {VEHICLE_TYPES.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>Choose the type of vehicle.</FormDescription>
+                  <FormControl>
+                    <>
+                      <Input 
+                        placeholder="e.g., Car, Truck, Custom Van" 
+                        {...field} 
+                        list="vehicle-type-suggestions"
+                      />
+                      <datalist id="vehicle-type-suggestions">
+                        {VEHICLE_TYPES.map((type) => (
+                          <option key={type} value={type} />
+                        ))}
+                      </datalist>
+                    </>
+                  </FormControl>
+                  <FormDescription>Choose from suggestions or enter a custom vehicle type.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

@@ -1,5 +1,6 @@
 
-export type VehicleType = 'Car' | 'Truck' | 'Bus' | 'Van' | 'Motorcycle' | 'Other';
+
+export type VehicleType = string; // Changed from union to string to allow custom types
 export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
 export interface Vehicle {
@@ -28,7 +29,7 @@ export interface VehicleDocument {
 }
 
 export interface Alert {
-  id: string;
+  id:string;
   vehicleId: string;
   vehicleRegistration: string;
   documentType: DocumentType;
@@ -40,11 +41,14 @@ export interface Alert {
   userId?: string;
 }
 
+export type UserRole = 'admin' | 'manager' | 'viewer';
+
 export interface User {
   id: string;
   name: string;
   email: string;
   avatarUrl?: string;
+  role: UserRole; // Added role
 }
 
 export interface SummaryStats {
@@ -58,21 +62,22 @@ export interface SummaryStats {
 export type AuditLogAction = 
   | 'CREATE_VEHICLE' | 'UPDATE_VEHICLE' | 'DELETE_VEHICLE'
   | 'UPLOAD_DOCUMENT' | 'UPDATE_DOCUMENT' | 'DELETE_DOCUMENT'
-  | 'MARK_ALERT_READ';
+  | 'MARK_ALERT_READ'
+  | 'USER_LOGIN' | 'USER_LOGOUT' // Example future actions
+  | 'VIEW_REPORT' | 'EXPORT_REPORT';
 
 export interface AuditLogEntry {
   id: string;
   timestamp: string; // ISO datetime string
   userId: string; // Or system if no user context
   action: AuditLogAction;
-  entityType: 'VEHICLE' | 'DOCUMENT' | 'ALERT';
-  entityId: string;
+  entityType: 'VEHICLE' | 'DOCUMENT' | 'ALERT' | 'USER' | 'SYSTEM' | 'REPORT';
+  entityId?: string; // Optional if not applicable (e.g. system event)
   entityRegistration?: string; // For quick ref like vehicle reg number
   details: Record<string, any>; // Flexible JSON blob for action-specific details
 }
 
 export interface ReportableDocument extends VehicleDocument {
   vehicleRegistration: string;
-  // vehicleId is already in VehicleDocument
   daysDifference: number; // positive for days left, negative for days overdue
 }
