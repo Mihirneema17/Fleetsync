@@ -25,6 +25,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
+import { SmartDocumentIngestionModal } from '@/components/document/smart-document-ingestion-modal';
 
 
 interface DocumentAlertItem {
@@ -147,6 +148,12 @@ export default function DashboardPage() {
     );
   }
 
+  // const handleSmartIngestSubmit = async (file: File) => {
+  //   // Logic for Step D and F will go here
+  //   console.log("Processing smart ingest for file:", file.name);
+  //   // setIsSmartIngestModalOpen(false); // Close modal after processing
+  // };
+
 
   return (
     <div className="flex flex-col gap-8">
@@ -186,14 +193,13 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {/* Placeholder for the SmartDocumentIngestionModal - will be added in a future step */}
-      {/* {isSmartIngestModalOpen && (
+      {isSmartIngestModalOpen && (
         <SmartDocumentIngestionModal
           isOpen={isSmartIngestModalOpen}
           onClose={() => setIsSmartIngestModalOpen(false)}
-          // onSubmit={handleSmartIngestSubmit} // This function will be defined later
+          // onProcess={handleSmartIngestSubmit} // This function will be defined later
         />
-      )} */}
+      )}
 
 
       <div className="grid gap-6 md:grid-cols-3">
