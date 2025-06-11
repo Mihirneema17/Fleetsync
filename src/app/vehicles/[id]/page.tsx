@@ -1,9 +1,8 @@
 
-"use client";
 import { notFound, useRouter } from 'next/navigation';
-import { getVehicleById, getDocumentComplianceStatus, addOrUpdateDocument, getLatestDocumentForType } from '@/lib/data';
+import { getVehicleById, getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/data';
 import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -11,17 +10,15 @@ import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, 
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
-import { DATE_FORMAT, AI_SUPPORTED_DOCUMENT_TYPES } from '@/lib/constants';
-import React, { useState, useEffect, use } from 'react';
-import { DocumentUploadModal } from '@/components/document/document-upload-modal';
-import { useToast } from '@/hooks/use-toast';
+import { DATE_FORMAT } from '@/lib/constants';
+import React from 'react';
 import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-
+import { VehicleDocumentManager } from '@/components/vehicle/vehicle-document-manager'; // New Client Component
 
 type VehicleDetailPageProps = {
-  params: { id: string } | Promise<{ id: string }>;
+  params: { id: string };
 };
 
 type DisplayStatus = 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing' | 'Superseded';
@@ -29,157 +26,62 @@ interface DisplayStatusConfig {
   icon: React.ElementType;
   color: string;
   badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
-  bgColor?: string; // Optional background color for the row
+  bgColor?: string;
 }
 
+const baseStatusConfig = (status: VehicleDocument['status']): DisplayStatusConfig => {
+  switch (status) {
+    case 'Compliant':
+      return { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default', bgColor: 'bg-green-50' };
+    case 'ExpiringSoon':
+      return { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary', bgColor: 'bg-yellow-50' };
+    case 'Overdue':
+      return { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive', bgColor: 'bg-red-50' };
+    case 'Missing':
+    default:
+      return { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline', bgColor: 'bg-orange-50' };
+  }
+};
 
-export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailPageProps) {
-  const resolvedParams = typeof (paramsProp as Promise<{id: string}>)?.then === 'function'
-    ? use(paramsProp as Promise<{id: string}>)
-    : paramsProp as {id: string};
+const getEffectiveDocDisplayConfig = (
+  doc: VehicleDocument,
+  allVehicleDocuments: VehicleDocument[],
+  vehicleId: string
+): { text: DisplayStatus; config: DisplayStatusConfig } => {
+  const rawStatus = getDocumentComplianceStatus(doc.expiryDate);
 
-  const { id: vehicleId } = resolvedParams;
-
-  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType } | null>(null);
-  const router = useRouter();
-  const { toast } = useToast();
-
-  useEffect(() => {
-    if (vehicleId) {
-      async function fetchVehicle() {
-        setIsLoading(true);
-        const fetchedVehicle = await getVehicleById(vehicleId);
-        if (!fetchedVehicle) {
-          notFound();
-        } else {
-          setVehicle(fetchedVehicle);
-        }
-        setIsLoading(false);
-      }
-      fetchVehicle();
-    }
-  }, [vehicleId]);
-
-  const baseStatusConfig = (status: VehicleDocument['status']): DisplayStatusConfig => {
-    switch (status) {
-      case 'Compliant':
-        return { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default', bgColor: 'bg-green-50' };
-      case 'ExpiringSoon':
-        return { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary', bgColor: 'bg-yellow-50' };
-      case 'Overdue':
-        return { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive', bgColor: 'bg-red-50' };
-      case 'Missing':
-      default:
-        return { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline', bgColor: 'bg-orange-50' };
-    }
-  };
-  
-  const getEffectiveDocDisplayConfig = (
-    doc: VehicleDocument, 
-    allVehicleDocuments: VehicleDocument[]
-  ): { text: DisplayStatus; config: DisplayStatusConfig } => {
-    const rawStatus = getDocumentComplianceStatus(doc.expiryDate);
-  
-    if (rawStatus === 'Compliant' || rawStatus === 'ExpiringSoon') {
-      return { text: rawStatus, config: baseStatusConfig(rawStatus) };
-    }
-    if (rawStatus === 'Missing' && !doc.expiryDate) {
-      return { text: 'Missing', config: baseStatusConfig('Missing') };
-    }
-  
-    // At this point, rawStatus is 'Overdue' (or 'Missing' but with an expiry date, making it effectively Overdue)
-    
-    // Check if this document itself is the latest active document of its type.
-    // If it is, then its rawStatus ('Overdue') is the correct one to display.
-    const latestActiveDocOfSameType = getLatestDocumentForType(
-        { id: vehicleId, documents: allVehicleDocuments } as Vehicle, // Pass a minimal vehicle-like structure
-        doc.type, 
-        doc.customTypeName
-    );
-        
-    if (latestActiveDocOfSameType && latestActiveDocOfSameType.id !== doc.id) {
-        // This 'doc' is not the latest active one.
-        // If the actual latest active one is 'Compliant' or 'ExpiringSoon', then this 'doc' is 'Superseded'.
-        const statusOfLatest = getDocumentComplianceStatus(latestActiveDocOfSameType.expiryDate);
-        if (statusOfLatest === 'Compliant' || statusOfLatest === 'ExpiringSoon') {
-            return { 
-                text: 'Superseded', 
-                config: { icon: History, color: 'text-gray-500', badgeVariant: 'outline', bgColor: 'bg-gray-50 hover:bg-gray-100' } 
-            };
-        }
-    }
-  
-    // If this doc is Overdue and it IS the latest active, or if there's no newer active one,
-    // or if the newer one is also problematic, then this doc's 'Overdue' status stands.
+  if (rawStatus === 'Compliant' || rawStatus === 'ExpiringSoon') {
     return { text: rawStatus, config: baseStatusConfig(rawStatus) };
-  };
+  }
+  if (rawStatus === 'Missing' && !doc.expiryDate) {
+    return { text: 'Missing', config: baseStatusConfig('Missing') };
+  }
 
+  const latestActiveDocOfSameType = getLatestDocumentForType(
+      { id: vehicleId, documents: allVehicleDocuments } as Vehicle, // Pass a minimal vehicle-like structure
+      doc.type,
+      doc.customTypeName
+  );
 
-  const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType }) => {
-    setEditingDocumentContext(docContext || { type: 'Insurance' });
-    setIsModalOpen(true);
-  };
-
-  const handleDocumentSubmit = async (
-    data: {
-      documentType: VehicleDocumentType;
-      customTypeName?: string;
-      policyNumber?: string | null;
-      startDate?: string | null; // ISO string
-      expiryDate: string | null; // ISO string
-      documentFile?: File; 
-      documentName?: string; 
-      documentUrl?: string;  
-    },
-    aiExtractedPolicyNumber?: string | null,
-    aiPolicyNumberConfidence?: number | null,
-    aiExtractedStartDate?: string | null,
-    aiStartDateConfidence?: number | null,
-    aiExtractedExpiryDate?: string | null,
-    aiExpiryDateConfidence?: number | null
-  ) => {
-    if (!vehicle) return;
-    try {
-      const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
-        type: data.documentType,
-        customTypeName: data.customTypeName,
-        policyNumber: data.policyNumber,
-        startDate: data.startDate,
-        expiryDate: data.expiryDate,
-        documentName: data.documentName, 
-        documentUrl: data.documentUrl,   
-        aiExtractedPolicyNumber,
-        aiPolicyNumberConfidence,
-        aiExtractedStartDate,
-        aiStartDateConfidence,
-        aiExtractedDate: aiExtractedExpiryDate,
-        aiConfidence: aiExpiryDateConfidence,
-      });
-      if (updatedVehicle) {
-        setVehicle(updatedVehicle);
-        toast({ title: 'Success', description: `Document for ${data.documentType} added successfully.` });
-      } else {
-        throw new Error('Failed to update vehicle from server');
+  if (latestActiveDocOfSameType && latestActiveDocOfSameType.id !== doc.id) {
+      const statusOfLatest = getDocumentComplianceStatus(latestActiveDocOfSameType.expiryDate);
+      if (statusOfLatest === 'Compliant' || statusOfLatest === 'ExpiringSoon') {
+          return {
+              text: 'Superseded',
+              config: { icon: History, color: 'text-gray-500', badgeVariant: 'outline', bgColor: 'bg-gray-50 hover:bg-gray-100' }
+          };
       }
-      setIsModalOpen(false);
-      setEditingDocumentContext(null);
-      router.refresh();
-    } catch (error) {
-      console.error('Failed to submit document:', error);
-      toast({ title: 'Error', description: 'Failed to save document. Please try again.', variant: 'destructive' });
-    }
-  };
+  }
+  return { text: rawStatus, config: baseStatusConfig(rawStatus) };
+};
 
 
-  if (isLoading || !vehicle) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </div>
-    );
+export default async function VehicleDetailPage({ params }: VehicleDetailPageProps) {
+  const vehicleId = params.id;
+  const vehicle = await getVehicleById(vehicleId);
+
+  if (!vehicle) {
+    notFound();
   }
 
   const documentsByType: Record<string, VehicleDocument[]> = {};
@@ -193,7 +95,6 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
   for (const key in documentsByType) {
     documentsByType[key].sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime());
   }
-
 
   return (
     <TooltipProvider>
@@ -210,11 +111,12 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
             <Link href={`/vehicles/${vehicle.id}/edit`}>
                 <Button variant="outline"><Edit className="mr-2 h-4 w-4" /> Edit Vehicle</Button>
             </Link>
-            <Button onClick={() => handleOpenUploadModal()}>
-                <UploadCloud className="mr-2 h-4 w-4" /> Upload New Document
-            </Button>
+            {/* Document upload button moved to VehicleDocumentManager */}
         </div>
       </div>
+      
+      {/* VehicleDocumentManager will handle the upload button and modal */}
+      <VehicleDocumentManager vehicle={vehicle} extractExpiryDateFn={extractExpiryDate} />
 
       <Card className="shadow-md">
         <CardHeader>
@@ -254,7 +156,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                     </TableHeader>
                     <TableBody>
                       {docs.map((doc) => {
-                        const { text: statusText, config: displayConfig } = getEffectiveDocDisplayConfig(doc, vehicle.documents);
+                        const { text: statusText, config: displayConfig } = getEffectiveDocDisplayConfig(doc, vehicle.documents, vehicle.id);
                         const StatusIcon = displayConfig.icon;
                         const hasAiInfo = doc.aiExtractedPolicyNumber || doc.aiExtractedStartDate || doc.aiExtractedDate;
                         return (
@@ -311,16 +213,8 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                                 )}
                             </TableCell>
                             <TableCell className="text-right">
-                              <Button variant="outline" size="sm" className="mr-2 text-xs h-7" onClick={() => handleOpenUploadModal({ type: doc.type, customTypeName: doc.customTypeName })}>
-                                 <UploadCloud className="mr-1 h-3 w-3" /> Add New
-                              </Button>
-                              {doc.documentUrl ? (
-                                <Button variant="link" size="sm" asChild className="text-xs p-0 h-7">
-                                  <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer">View Doc</a>
-                                </Button>
-                              ) : (
-                                <Button variant="link" size="sm" className="text-xs p-0 h-7 text-muted-foreground" disabled>No File</Button>
-                              )}
+                              {/* Add New and View Doc buttons moved to VehicleDocumentManager where modal context is needed */}
+                               <span className="text-xs text-muted-foreground">Manage in section above</span>
                             </TableCell>
                           </TableRow>
                         );
@@ -340,19 +234,8 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
         </CardContent>
       </Card>
 
-      {isModalOpen && vehicle && (
-        <DocumentUploadModal
-          isOpen={isModalOpen}
-          onClose={() => { setIsModalOpen(false); setEditingDocumentContext(null); }}
-          onSubmit={handleDocumentSubmit}
-          vehicleId={vehicle.id}
-          initialDocumentData={editingDocumentContext}
-          extractExpiryDateFn={extractExpiryDate}
-        />
-      )}
+      {/* Modal is now managed by VehicleDocumentManager */}
     </div>
     </TooltipProvider>
   );
 }
-
-    
