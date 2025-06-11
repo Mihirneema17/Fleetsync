@@ -1,7 +1,7 @@
 
 "use client";
 import { notFound, useRouter } from 'next/navigation';
-import { getVehicleById, getDocumentComplianceStatus, addOrUpdateDocument } from '@/lib/data';
+import { getVehicleById, getDocumentComplianceStatus, addOrUpdateDocument, getLatestDocumentForType } from '@/lib/data';
 import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 type VehicleDetailPageProps = {
   params: { id: string } | Promise<{ id: string }>;
 };
+
+type DisplayStatus = 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing' | 'Superseded';
+interface DisplayStatusConfig {
+  icon: React.ElementType;
+  color: string;
+  badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
+  bgColor?: string; // Optional background color for the row
+}
+
 
 export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailPageProps) {
   const resolvedParams = typeof (paramsProp as Promise<{id: string}>)?.then === 'function'
@@ -54,19 +63,60 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
     }
   }, [vehicleId]);
 
-  const getStatusConfig = (status: VehicleDocument['status']) => {
+  const baseStatusConfig = (status: VehicleDocument['status']): DisplayStatusConfig => {
     switch (status) {
       case 'Compliant':
-        return { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default' as const, bgColor: 'bg-green-50' };
+        return { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default', bgColor: 'bg-green-50' };
       case 'ExpiringSoon':
-        return { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary' as const, bgColor: 'bg-yellow-50' };
+        return { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary', bgColor: 'bg-yellow-50' };
       case 'Overdue':
-        return { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive' as const, bgColor: 'bg-red-50' };
+        return { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive', bgColor: 'bg-red-50' };
       case 'Missing':
       default:
-        return { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline' as const, bgColor: 'bg-orange-50' };
+        return { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline', bgColor: 'bg-orange-50' };
     }
   };
+  
+  const getEffectiveDocDisplayConfig = (
+    doc: VehicleDocument, 
+    allVehicleDocuments: VehicleDocument[]
+  ): { text: DisplayStatus; config: DisplayStatusConfig } => {
+    const rawStatus = getDocumentComplianceStatus(doc.expiryDate);
+  
+    if (rawStatus === 'Compliant' || rawStatus === 'ExpiringSoon') {
+      return { text: rawStatus, config: baseStatusConfig(rawStatus) };
+    }
+    if (rawStatus === 'Missing' && !doc.expiryDate) {
+      return { text: 'Missing', config: baseStatusConfig('Missing') };
+    }
+  
+    // At this point, rawStatus is 'Overdue' (or 'Missing' but with an expiry date, making it effectively Overdue)
+    
+    // Check if this document itself is the latest active document of its type.
+    // If it is, then its rawStatus ('Overdue') is the correct one to display.
+    const latestActiveDocOfSameType = getLatestDocumentForType(
+        { id: vehicleId, documents: allVehicleDocuments } as Vehicle, // Pass a minimal vehicle-like structure
+        doc.type, 
+        doc.customTypeName
+    );
+        
+    if (latestActiveDocOfSameType && latestActiveDocOfSameType.id !== doc.id) {
+        // This 'doc' is not the latest active one.
+        // If the actual latest active one is 'Compliant' or 'ExpiringSoon', then this 'doc' is 'Superseded'.
+        const statusOfLatest = getDocumentComplianceStatus(latestActiveDocOfSameType.expiryDate);
+        if (statusOfLatest === 'Compliant' || statusOfLatest === 'ExpiringSoon') {
+            return { 
+                text: 'Superseded', 
+                config: { icon: History, color: 'text-gray-500', badgeVariant: 'outline', bgColor: 'bg-gray-50 hover:bg-gray-100' } 
+            };
+        }
+    }
+  
+    // If this doc is Overdue and it IS the latest active, or if there's no newer active one,
+    // or if the newer one is also problematic, then this doc's 'Overdue' status stands.
+    return { text: rawStatus, config: baseStatusConfig(rawStatus) };
+  };
+
 
   const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType }) => {
     setEditingDocumentContext(docContext || { type: 'Insurance' });
@@ -78,11 +128,11 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
       documentType: VehicleDocumentType;
       customTypeName?: string;
       policyNumber?: string | null;
-      startDate?: string | null;
-      expiryDate: string | null;
-      documentFile?: File;
-      documentName?: string; // Added
-      documentUrl?: string;  // Added
+      startDate?: string | null; // ISO string
+      expiryDate: string | null; // ISO string
+      documentFile?: File; 
+      documentName?: string; 
+      documentUrl?: string;  
     },
     aiExtractedPolicyNumber?: string | null,
     aiPolicyNumberConfidence?: number | null,
@@ -99,8 +149,8 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
         policyNumber: data.policyNumber,
         startDate: data.startDate,
         expiryDate: data.expiryDate,
-        documentName: data.documentName, // Pass through
-        documentUrl: data.documentUrl,   // Pass through
+        documentName: data.documentName, 
+        documentUrl: data.documentUrl,   
         aiExtractedPolicyNumber,
         aiPolicyNumberConfidence,
         aiExtractedStartDate,
@@ -204,12 +254,11 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                     </TableHeader>
                     <TableBody>
                       {docs.map((doc) => {
-                        const status = getDocumentComplianceStatus(doc.expiryDate);
-                        const config = getStatusConfig(status);
-                        const StatusIcon = config.icon;
+                        const { text: statusText, config: displayConfig } = getEffectiveDocDisplayConfig(doc, vehicle.documents);
+                        const StatusIcon = displayConfig.icon;
                         const hasAiInfo = doc.aiExtractedPolicyNumber || doc.aiExtractedStartDate || doc.aiExtractedDate;
                         return (
-                          <TableRow key={doc.id} className={cn(config.bgColor?.replace('bg-','hover:bg-opacity-80 hover:'), doc.status === "Missing" && !doc.expiryDate ? "opacity-50" : "")}>
+                          <TableRow key={doc.id} className={cn(displayConfig.bgColor?.replace('bg-','hover:bg-opacity-80 hover:'), doc.status === "Missing" && !doc.expiryDate ? "opacity-50" : "")}>
                             <TableCell className="text-xs font-medium">
                                 {doc.policyNumber || <span className="text-muted-foreground italic">N/A</span>}
                             </TableCell>
@@ -219,13 +268,14 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                               {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
                             </TableCell>
                             <TableCell>
-                              <Badge variant={config.badgeVariant} className={cn(
+                              <Badge variant={displayConfig.badgeVariant} className={cn(
                                 "text-xs",
-                                status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
-                                status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
+                                statusText === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
+                                statusText === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : '',
+                                statusText === 'Superseded' ? 'bg-gray-100 text-gray-700 border-gray-300' : ''
                               )}>
-                                <StatusIcon className={cn("mr-1 h-3 w-3", config.color)} />
-                                {status}
+                                <StatusIcon className={cn("mr-1 h-3 w-3", displayConfig.color)} />
+                                {statusText}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-xs">
