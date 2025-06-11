@@ -23,6 +23,9 @@ const initializeDummyData = () => {
     { registrationNumber: 'MH12AB1234', type: 'Car', make: 'Toyota', model: 'Camry' },
     { registrationNumber: 'KA01CD5678', type: 'Truck', make: 'Volvo', model: 'FH' },
     { registrationNumber: 'DL03EF9012', type: 'Bus', make: 'Tata', model: 'Marcopolo' },
+    { registrationNumber: 'TN22XY7890', type: 'Van', make: 'Force', model: 'Traveller' },
+    { registrationNumber: 'PY01ZQ4567', type: 'Motorcycle', make: 'Honda', model: 'Activa' },
+
   ];
 
   vehicles = initialVehicles.map(v => {
@@ -35,10 +38,12 @@ const initializeDummyData = () => {
       updatedAt: createdAt,
       documents: DOCUMENT_TYPES.map(docType => {
         let expiryDate: Date | null = null;
-        if (docType === 'Insurance') expiryDate = addDays(today, Math.random() * 90); // Expires in 0-90 days
-        else if (docType === 'Fitness') expiryDate = addDays(today, Math.random() * 365 - 30); // Expires in -30 to 335 days
-        else if (docType === 'PUC') expiryDate = addDays(today, Math.random() * 180 - 60); // Expires in -60 to 120 days
-        else if (docType === 'AITP') expiryDate = addDays(today, Math.random() * 400 - 15); // Expires in -15 to 385 days
+        const randDays = Math.random();
+        if (docType === 'Insurance') expiryDate = addDays(today, Math.floor(randDays * 90) - 15); // Expires in -15 to 75 days
+        else if (docType === 'Fitness') expiryDate = addDays(today, Math.floor(randDays * 365) - 45); // Expires in -45 to 320 days
+        else if (docType === 'PUC') expiryDate = addDays(today, Math.floor(randDays * 180) - 25); // Expires in -25 to 155 days
+        else if (docType === 'AITP' && v.type === 'Bus') expiryDate = addDays(today, Math.floor(randDays * 400) - 10); // Expires in -10 to 390 days (only for buses for variety)
+        else if (docType === 'AITP') expiryDate = addDays(today, 365) // Compliant for non-buses
         
         const doc: VehicleDocument = {
           id: generateId(),
@@ -46,7 +51,7 @@ const initializeDummyData = () => {
           type: docType,
           expiryDate: expiryDate ? formatISO(expiryDate, { representation: 'date' }) : null,
           status: 'Missing', // Will be updated by getComplianceStatus
-          uploadedAt: formatISO(addDays(today, -Math.random()*100)), // Uploaded some time ago
+          uploadedAt: formatISO(addDays(today, -Math.floor(Math.random()*100))), // Uploaded some time ago
         };
         doc.status = getDocumentComplianceStatus(doc.expiryDate);
         return doc;
@@ -204,15 +209,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
   let expiringSoonDocuments = 0;
   let overdueDocuments = 0;
 
-  let insuranceExpiringSoon = 0;
-  let insuranceOverdue = 0;
-  let fitnessExpiringSoon = 0;
-  let fitnessOverdue = 0;
-  let pucExpiringSoon = 0;
-  let pucOverdue = 0;
-  let aitpExpiringSoon = 0;
-  let aitpOverdue = 0;
-
   vehicles.forEach(vehicle => {
     let isVehicleCompliant = true;
     vehicle.documents.forEach(doc => {
@@ -221,20 +217,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
       if (currentStatus === 'ExpiringSoon') expiringSoonDocuments++;
       if (currentStatus === 'Overdue') overdueDocuments++;
       if (currentStatus === 'Overdue' || currentStatus === 'Missing') isVehicleCompliant = false;
-
-      if (doc.type === 'Insurance') {
-        if (currentStatus === 'ExpiringSoon') insuranceExpiringSoon++;
-        if (currentStatus === 'Overdue') insuranceOverdue++;
-      } else if (doc.type === 'Fitness') {
-        if (currentStatus === 'ExpiringSoon') fitnessExpiringSoon++;
-        if (currentStatus === 'Overdue') fitnessOverdue++;
-      } else if (doc.type === 'PUC') {
-        if (currentStatus === 'ExpiringSoon') pucExpiringSoon++;
-        if (currentStatus === 'Overdue') pucOverdue++;
-      } else if (doc.type === 'AITP') {
-        if (currentStatus === 'ExpiringSoon') aitpExpiringSoon++;
-        if (currentStatus === 'Overdue') aitpOverdue++;
-      }
     });
     if (isVehicleCompliant) compliantVehicles++;
   });
@@ -244,14 +226,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
     compliantVehicles,
     expiringSoonDocuments,
     overdueDocuments,
-    insuranceExpiringSoon,
-    insuranceOverdue,
-    fitnessExpiringSoon,
-    fitnessOverdue,
-    pucExpiringSoon,
-    pucOverdue,
-    aitpExpiringSoon,
-    aitpOverdue,
   };
 }
 

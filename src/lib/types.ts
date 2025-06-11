@@ -38,6 +38,8 @@ export interface Alert {
   message: string;
   createdAt: string;
   isRead: boolean;
+  // Added userId to scope alerts per user in a multi-user scenario (mocked for now)
+  userId?: string; 
 }
 
 export interface User {
@@ -52,14 +54,5 @@ export interface SummaryStats {
   compliantVehicles: number;
   expiringSoonDocuments: number; // General count of all docs expiring soon
   overdueDocuments: number; // General count of all docs overdue
-
-  insuranceExpiringSoon: number;
-  insuranceOverdue: number;
-  fitnessExpiringSoon: number;
-  fitnessOverdue: number;
-  pucExpiringSoon: number;
-  pucOverdue: number;
-  aitpExpiringSoon: number;
-  aitpOverdue: number;
 }
 

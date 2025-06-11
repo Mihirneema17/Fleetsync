@@ -3,28 +3,101 @@ import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, Activit
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { getSummaryStats, getVehicles, getAlerts } from '@/lib/data';
-import type { Vehicle, Alert as AlertType, SummaryStats } from '@/lib/types';
+import { getSummaryStats, getVehicles, getAlerts, getDocumentComplianceStatus } from '@/lib/data';
+import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument } from '@/lib/types';
 import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from '@/components/ui/badge';
-import { Card } from '@/components/ui/card';
-import { formatDistanceToNow, parseISO } from 'date-fns';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { formatDistanceToNow, parseISO, differenceInDays, format } from 'date-fns';
+import { EXPIRY_WARNING_DAYS, DATE_FORMAT } from '@/lib/constants';
+import { cn } from '@/lib/utils';
+
+interface DocumentAlertItem {
+  vehicleId: string;
+  vehicleRegistration: string;
+  documentId: string;
+  documentType: DocumentType;
+  customTypeName?: string;
+  expiryDate: string;
+  statusText: string;
+  statusVariant: 'destructive' | 'secondary' | 'default' | 'outline';
+  daysDiff: number; // positive for expiring soon (days left), negative for overdue (days past)
+}
+
+const documentTypeIcons: Record<DocumentType | 'Generic', React.ElementType> = {
+  Insurance: ShieldCheck,
+  Fitness: ActivitySquare,
+  PUC: Leaf,
+  AITP: Paperclip,
+  Other: FileWarning,
+  Generic: FileWarning,
+};
 
 export default async function DashboardPage() {
   const stats: SummaryStats = await getSummaryStats();
-  const recentVehicles: Vehicle[] = (await getVehicles()).slice(0, 4); 
+  const allVehicles: Vehicle[] = await getVehicles();
+  const recentVehicles: Vehicle[] = allVehicles.slice(0, 4);
   const alerts: AlertType[] = (await getAlerts()).filter(a => !a.isRead).slice(0,5);
 
-  const getCardIconColor = (overdue: number, expiring: number) => {
-    if (overdue > 0) return 'text-red-500';
-    if (expiring > 0) return 'text-yellow-500';
-    return 'text-green-500';
+  const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docType: DocumentType): DocumentAlertItem[] => {
+    const items: DocumentAlertItem[] = [];
+    const now = new Date();
+
+    vehicles.forEach(vehicle => {
+      vehicle.documents.forEach(doc => {
+        if (doc.type === docType && doc.expiryDate) {
+          const expiry = parseISO(doc.expiryDate);
+          const daysDifference = differenceInDays(expiry, now);
+          const complianceStatus = getDocumentComplianceStatus(doc.expiryDate);
+
+          if (complianceStatus === 'Overdue' || complianceStatus === 'ExpiringSoon') {
+            let statusText = '';
+            let statusVariant: DocumentAlertItem['statusVariant'] = 'default';
+
+            if (complianceStatus === 'Overdue') {
+              statusText = `Overdue by ${Math.abs(daysDifference)} day(s)`;
+              statusVariant = 'destructive';
+            } else if (complianceStatus === 'ExpiringSoon') {
+              statusText = `Expires in ${daysDifference} day(s)`;
+              statusVariant = 'secondary';
+            }
+            
+            items.push({
+              vehicleId: vehicle.id,
+              vehicleRegistration: vehicle.registrationNumber,
+              documentId: doc.id,
+              documentType: doc.type,
+              customTypeName: doc.customTypeName,
+              expiryDate: doc.expiryDate,
+              statusText,
+              statusVariant,
+              daysDiff: daysDifference,
+            });
+          }
+        }
+      });
+    });
+    // Sort by daysDiff (overdue first, then soonest expiring)
+    return items.sort((a, b) => a.daysDiff - b.daysDiff);
   };
 
+  const insuranceAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'Insurance');
+  const fitnessAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'Fitness');
+  const pucAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'PUC');
+  const aitpAlertItems = processVehiclesForDocumentAlerts(allVehicles, 'AITP');
+
+  const documentSections: { title: string; docType: DocumentType; items: DocumentAlertItem[]; icon: React.ElementType }[] = [
+    { title: "Insurance", docType: 'Insurance', items: insuranceAlertItems, icon: documentTypeIcons.Insurance },
+    { title: "Fitness Certificates", docType: 'Fitness', items: fitnessAlertItems, icon: documentTypeIcons.Fitness },
+    { title: "PUC Certificates", docType: 'PUC', items: pucAlertItems, icon: documentTypeIcons.PUC },
+    { title: "AITP Documents", docType: 'AITP', items: aitpAlertItems, icon: documentTypeIcons.AITP },
+  ];
+
   return (
-    <div className="flex flex-col gap-8"> {/* Increased gap for better separation */}
+    <div className="flex flex-col gap-8">
       {/* General Stats */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <SummaryCard 
@@ -41,14 +114,14 @@ export default async function DashboardPage() {
           iconClassName="text-green-500"
         />
         <SummaryCard 
-          title="Expiring Soon (All)" 
+          title="Expiring Soon (All Docs)" 
           value={stats.expiringSoonDocuments} 
           icon={FileWarning}
           description="Total documents needing attention"
           iconClassName="text-yellow-500"
         />
         <SummaryCard 
-          title="Overdue (All)" 
+          title="Overdue (All Docs)" 
           value={stats.overdueDocuments} 
           icon={ShieldAlert}
           description="Total documents requiring immediate action"
@@ -56,38 +129,61 @@ export default async function DashboardPage() {
         />
       </div>
 
-      {/* Document Specific Stats */}
+      {/* Detailed Document Compliance Status */}
       <div>
-        <h2 className="text-2xl font-semibold font-headline mb-4">Document Compliance Status</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <SummaryCard
-            title="Insurance"
-            value={`${stats.insuranceOverdue + stats.insuranceExpiringSoon} Alerts`}
-            icon={ShieldCheck}
-            description={`${stats.insuranceOverdue} overdue, ${stats.insuranceExpiringSoon} expiring`}
-            iconClassName={getCardIconColor(stats.insuranceOverdue, stats.insuranceExpiringSoon)}
-          />
-          <SummaryCard
-            title="Fitness"
-            value={`${stats.fitnessOverdue + stats.fitnessExpiringSoon} Alerts`}
-            icon={ActivitySquare}
-            description={`${stats.fitnessOverdue} overdue, ${stats.fitnessExpiringSoon} expiring`}
-            iconClassName={getCardIconColor(stats.fitnessOverdue, stats.fitnessExpiringSoon)}
-          />
-          <SummaryCard
-            title="PUC (Pollution)"
-            value={`${stats.pucOverdue + stats.pucExpiringSoon} Alerts`}
-            icon={Leaf}
-            description={`${stats.pucOverdue} overdue, ${stats.pucExpiringSoon} expiring`}
-            iconClassName={getCardIconColor(stats.pucOverdue, stats.pucExpiringSoon)}
-          />
-          <SummaryCard
-            title="AITP"
-            value={`${stats.aitpOverdue + stats.aitpExpiringSoon} Alerts`}
-            icon={Paperclip}
-            description={`${stats.aitpOverdue} overdue, ${stats.aitpExpiringSoon} expiring`}
-            iconClassName={getCardIconColor(stats.aitpOverdue, stats.aitpExpiringSoon)}
-          />
+        <h2 className="text-2xl font-semibold font-headline mb-4">Detailed Document Status</h2>
+        <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-2">
+          {documentSections.map(({ title, items, icon: Icon, docType }) => (
+            <Card key={title} className="shadow-md">
+              <CardHeader className="pb-3">
+                <CardTitle className="font-headline text-lg flex items-center">
+                  <Icon className="mr-2 h-5 w-5 text-primary" />
+                  {title} - Action Required
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {items.length > 0 ? (
+                  <ScrollArea className={cn("max-h-[300px]", items.length > 5 ? "h-[300px]" : "")}>
+                    <Table className="w-full">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[35%]">Vehicle Reg.</TableHead>
+                          <TableHead className="w-[45%]">Status</TableHead>
+                          <TableHead className="text-right w-[20%]">Expires</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {items.map(item => (
+                          <TableRow key={item.documentId}>
+                            <TableCell className="font-medium">
+                              <Link href={`/vehicles/${item.vehicleId}`} className="hover:underline text-primary">
+                                {item.vehicleRegistration}
+                              </Link>
+                            </TableCell>
+                            <TableCell>
+                              <Badge 
+                                variant={item.statusVariant}
+                                className={cn(
+                                  item.statusVariant === 'secondary' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : ''
+                                )}
+                              >
+                                {item.statusText}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right text-xs">
+                              {format(parseISO(item.expiryDate), DATE_FORMAT)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No upcoming or overdue {docType.toLowerCase()} documents.</p>
+                )}
+              </CardContent>
+            </Card>
+          ))}
         </div>
       </div>
       
