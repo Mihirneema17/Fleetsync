@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2, History } from 'lucide-react';
+import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2, History, Info } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
@@ -18,6 +18,7 @@ import { DocumentUploadModal } from '@/components/document/document-upload-modal
 import { useToast } from '@/hooks/use-toast';
 import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 
 type VehicleDetailPageProps = {
@@ -34,7 +35,6 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  // editingDocument now represents the *type* of document to add/renew, or a specific historical doc to view/correct (future)
   const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType } | null>(null);
   const router = useRouter();
   const { toast } = useToast();
@@ -70,10 +70,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
   };
 
   const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType }) => {
-    // If docContext has an ID, it means user clicked "Update" on a specific historical doc.
-    // For now, "Update" will still mean "Add new renewal for this type".
-    // If no docContext, it's "Upload Document" for a new type or first time.
-    setEditingDocumentContext(docContext || { type: 'Insurance' }); // Default to Insurance if fresh upload
+    setEditingDocumentContext(docContext || { type: 'Insurance' }); 
     setIsModalOpen(true);
   };
 
@@ -81,25 +78,36 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
     data: {
       documentType: VehicleDocumentType;
       customTypeName?: string;
+      policyNumber?: string | null;
+      startDate?: string | null;
       expiryDate: string | null;
       documentFile?: File;
     },
-    aiExtractedDate?: string | null,
-    aiConfidence?: number | null
+    aiExtractedPolicyNumber?: string | null,
+    aiPolicyNumberConfidence?: number | null,
+    aiExtractedStartDate?: string | null,
+    aiStartDateConfidence?: number | null,
+    aiExtractedExpiryDate?: string | null,
+    aiExpiryDateConfidence?: number | null
   ) => {
     if (!vehicle) return;
     try {
-      // addOrUpdateDocument now always adds a new document, creating history
       const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
         type: data.documentType,
         customTypeName: data.customTypeName,
+        policyNumber: data.policyNumber,
+        startDate: data.startDate,
         expiryDate: data.expiryDate,
         documentName: data.documentFile?.name,
-        aiExtractedDate,
-        aiConfidence,
+        aiExtractedPolicyNumber,
+        aiPolicyNumberConfidence,
+        aiExtractedStartDate,
+        aiStartDateConfidence,
+        aiExtractedDate: aiExtractedExpiryDate, // Corresponds to 'expiryDate'
+        aiConfidence: aiExpiryDateConfidence,   // Corresponds to 'expiryDate'
       });
       if (updatedVehicle) {
-        setVehicle(updatedVehicle); // Refresh vehicle data on page
+        setVehicle(updatedVehicle); 
         toast({ title: 'Success', description: `Document for ${data.documentType} added successfully.` });
       } else {
         throw new Error('Failed to update vehicle from server');
@@ -122,7 +130,6 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
     );
   }
 
-  // Group documents by type for display
   const documentsByType: Record<string, VehicleDocument[]> = {};
   vehicle.documents.forEach(doc => {
     const key = doc.type === 'Other' && doc.customTypeName ? `${doc.type} (${doc.customTypeName})` : doc.type;
@@ -131,13 +138,13 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
     }
     documentsByType[key].push(doc);
   });
-  // Sort documents within each group by uploadedAt descending (newest first)
   for (const key in documentsByType) {
     documentsByType[key].sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime());
   }
 
 
   return (
+    <TooltipProvider>
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -177,7 +184,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
           <CardDescription>View and manage all historical and current documents for this vehicle.</CardDescription>
         </CardHeader>
         <CardContent>
-          {vehicle.documents.filter(d => d.status !== 'Missing' || d.expiryDate).length > 0 ? ( // Show table if there are actual docs, not just placeholders
+          {vehicle.documents.filter(d => d.status !== 'Missing' || d.expiryDate).length > 0 ? (
             Object.entries(documentsByType).map(([docTypeKey, docs]) => (
               <div key={docTypeKey} className="mb-6">
                 <h3 className="text-md font-semibold mb-2 capitalize border-b pb-1">{docTypeKey.toLowerCase()}</h3>
@@ -185,10 +192,11 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[25%]">Uploaded At</TableHead>
-                        <TableHead className="w-[25%]">Expiry Date</TableHead>
-                        <TableHead className="w-[20%]">Status</TableHead>
-                        <TableHead className="w-[15%]">AI Date</TableHead>
+                        <TableHead className="w-[18%]">Policy/Doc #</TableHead>
+                        <TableHead className="w-[20%]">Validity Period</TableHead>
+                        <TableHead className="w-[15%]">Status</TableHead>
+                        <TableHead className="w-[12%]">Uploaded</TableHead>
+                        <TableHead className="w-[20%]">AI Extracted Info</TableHead>
                         <TableHead className="text-right w-[15%]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -197,19 +205,20 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                         const status = getDocumentComplianceStatus(doc.expiryDate); 
                         const config = getStatusConfig(status);
                         const StatusIcon = config.icon;
+                        const hasAiInfo = doc.aiExtractedPolicyNumber || doc.aiExtractedStartDate || doc.aiExtractedDate;
                         return (
                           <TableRow key={doc.id} className={cn(config.bgColor?.replace('bg-','hover:bg-opacity-80 hover:'), doc.status === "Missing" && !doc.expiryDate ? "opacity-50" : "")}>
-                            <TableCell className="text-xs">
-                                {format(parseISO(doc.uploadedAt), `${DATE_FORMAT} HH:mm`)}
-                                {doc.documentName && <p className="text-muted-foreground truncate max-w-[150px] text-[10px]">{doc.documentName}</p>}
+                            <TableCell className="text-xs font-medium">
+                                {doc.policyNumber || <span className="text-muted-foreground italic">N/A</span>}
                             </TableCell>
-                            <TableCell>
-                              {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : (
-                                <span className="text-muted-foreground italic">Not Set</span>
-                              )}
+                            <TableCell className="text-xs">
+                              {doc.startDate ? format(parseISO(doc.startDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
+                              {' - '}
+                              {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
                             </TableCell>
                             <TableCell>
                               <Badge variant={config.badgeVariant} className={cn(
+                                "text-xs",
                                 status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
                                 status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
                               )}>
@@ -218,8 +227,25 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                               </Badge>
                             </TableCell>
                             <TableCell className="text-xs">
-                                {doc.aiExtractedDate ? format(parseISO(doc.aiExtractedDate), DATE_FORMAT) : '-'}
-                                {doc.aiConfidence && <span className="block text-muted-foreground text-[10px]">Conf: {doc.aiConfidence.toFixed(2)}</span>}
+                                {format(parseISO(doc.uploadedAt), `${DATE_FORMAT}`)}
+                                {doc.documentName && <p className="text-muted-foreground truncate max-w-[100px] text-[10px]">{doc.documentName}</p>}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                                {hasAiInfo ? (
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button variant="ghost" size="sm" className="p-0 h-auto text-xs"><Info className="h-3 w-3 text-blue-500"/></Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="text-xs">
+                                            <p className="font-semibold mb-1">AI Extracted:</p>
+                                            {doc.aiExtractedPolicyNumber && <div>Policy #: {doc.aiExtractedPolicyNumber} (Conf: {doc.aiPolicyNumberConfidence?.toFixed(2) ?? 'N/A'})</div>}
+                                            {doc.aiExtractedStartDate && <div>Start: {format(parseISO(doc.aiExtractedStartDate), DATE_FORMAT)} (Conf: {doc.aiStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>}
+                                            {doc.aiExtractedDate && <div>Expiry: {format(parseISO(doc.aiExtractedDate), DATE_FORMAT)} (Conf: {doc.aiConfidence?.toFixed(2) ?? 'N/A'})</div>}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                )}
                             </TableCell>
                             <TableCell className="text-right">
                               <Button variant="outline" size="sm" className="mr-2 text-xs h-7" onClick={() => handleOpenUploadModal({ type: doc.type, customTypeName: doc.customTypeName })}>
@@ -255,12 +281,12 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
           onClose={() => { setIsModalOpen(false); setEditingDocumentContext(null); }}
           onSubmit={handleDocumentSubmit}
           vehicleId={vehicle.id}
-          // Pass the type from context, or a default if adding completely new
           initialDocumentData={editingDocumentContext}
           extractExpiryDateFn={extractExpiryDate}
         />
       )}
     </div>
+    </TooltipProvider>
   );
 }
 

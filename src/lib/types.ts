@@ -19,13 +19,20 @@ export interface VehicleDocument {
   vehicleId: string;
   type: DocumentType;
   customTypeName?: string; // For 'Other' document type
-  expiryDate: string | null; // ISO Date string (user-confirmed or manually set)
+  policyNumber?: string | null; // New field for policy/document number
+  startDate?: string | null;    // New field for start of validity period (ISO Date string)
+  expiryDate: string | null; // Existing field, now represents end of validity (ISO Date string)
   documentUrl?: string; // URL to the stored document
   documentName?: string; // Name of the uploaded file
   status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing'; // This status is for THIS specific document instance
   uploadedAt: string; // ISO datetime string when this document record was created/uploaded
-  aiExtractedDate?: string | null; // Date extracted by AI (ISO Date string)
+  
+  aiExtractedDate?: string | null; // Date extracted by AI for expiryDate (ISO Date string)
   aiConfidence?: number | null;   // Confidence score from AI for the aiExtractedDate
+  aiExtractedPolicyNumber?: string | null; // New: Policy number extracted by AI
+  aiPolicyNumberConfidence?: number | null; // New: Confidence for policy number
+  aiExtractedStartDate?: string | null; // New: Start date extracted by AI
+  aiStartDateConfidence?: number | null; // New: Confidence for start date
 }
 
 export interface Alert {

@@ -34,7 +34,7 @@ import {
 } from '@/components/ui/select';
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, Loader2, FileText, AlertCircle } from 'lucide-react';
+import { CalendarIcon, Loader2, FileText, AlertCircle, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, parseISO, isValid } from 'date-fns';
 import { DOCUMENT_TYPES, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT } from '@/lib/constants';
@@ -45,7 +45,9 @@ import { useToast } from '@/hooks/use-toast';
 const formSchema = z.object({
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]]),
   customTypeName: z.string().optional(),
-  expiryDate: z.date().nullable(), // Nullable if AI is to extract or not applicable
+  policyNumber: z.string().max(50, "Policy number too long").optional().nullable(),
+  startDate: z.date().nullable(),
+  expiryDate: z.date().nullable(), 
   documentFile: z.instanceof(File).optional().nullable(),
 }).refine(data => {
   if (data.documentType === 'Other') {
@@ -55,6 +57,14 @@ const formSchema = z.object({
 }, {
   message: "Custom type name is required for 'Other' document type.",
   path: ["customTypeName"],
+}).refine(data => {
+  if (data.startDate && data.expiryDate && data.startDate > data.expiryDate) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Start date cannot be after expiry date.",
+  path: ["startDate"], 
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -66,14 +76,20 @@ interface DocumentUploadModalProps {
     data: {
       documentType: DocumentType;
       customTypeName?: string;
+      policyNumber?: string | null;
+      startDate?: string | null; // ISO string
       expiryDate: string | null; // ISO string
       documentFile?: File;
     },
-    aiExtractedDate?: string | null,
-    aiConfidence?: number | null
+    aiExtractedPolicyNumber?: string | null,
+    aiPolicyNumberConfidence?: number | null,
+    aiExtractedStartDate?: string | null,
+    aiStartDateConfidence?: number | null,
+    aiExtractedExpiryDate?: string | null,
+    aiExpiryDateConfidence?: number | null
   ) => Promise<void>;
   vehicleId: string;
-  initialDocumentData?: Partial<VehicleDocument> | { type: DocumentType, customTypeName?: string } | null; // Can be a partial doc for context or just type info
+  initialDocumentData?: Partial<VehicleDocument> | { type: DocumentType, customTypeName?: string } | null;
   extractExpiryDateFn: (input: ExtractExpiryDateInput) => Promise<ExtractExpiryDateOutput>;
 }
 
@@ -82,45 +98,55 @@ export function DocumentUploadModal({
   onClose,
   onSubmit,
   vehicleId,
-  initialDocumentData, // This might just provide type context for a new historical entry
+  initialDocumentData,
   extractExpiryDateFn,
 }: DocumentUploadModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExtractingDate, setIsExtractingDate] = useState(false);
-  const [filePreview, setFilePreview] = useState<string | null>(null); // For new file
+  const [filePreview, setFilePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [aiExtractedDate, setAiExtractedDate] = useState<string | null>(null);
-  const [aiConfidence, setAiConfidence] = useState<number | null>(null);
+  
+  const [aiExtractedPolicyNumber, setAiExtractedPolicyNumber] = useState<string | null>(null);
+  const [aiPolicyNumberConfidence, setAiPolicyNumberConfidence] = useState<number | null>(null);
+  const [aiExtractedStartDate, setAiExtractedStartDate] = useState<string | null>(null);
+  const [aiStartDateConfidence, setAiStartDateConfidence] = useState<number | null>(null);
+  const [aiExtractedExpiryDate, setAiExtractedExpiryDate] = useState<string | null>(null); // Renamed from aiExtractedDate
+  const [aiExpiryDateConfidence, setAiExpiryDateConfidence] = useState<number | null>(null); // Renamed from aiConfidence
+
   const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // If initialDocumentData has an ID, it's a specific historical doc (though we add new).
-  // If it only has 'type', it's context for adding a new historical entry of that type.
-  const isEditingHistoricalEntry = !!(initialDocumentData && 'id' in initialDocumentData);
-  const modalTitle = "Upload New Document Version"; // Always adding new for history
+  const modalTitle = "Upload New Document Version";
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       documentType: initialDocumentData?.type || 'Insurance',
       customTypeName: initialDocumentData?.customTypeName || '',
-      expiryDate: null, // Always null for new historical entry initially
+      policyNumber: '',
+      startDate: null,
+      expiryDate: null,
       documentFile: null,
     },
   });
 
   useEffect(() => {
-    // Reset form for new historical entry, but pre-fill type if provided
     form.reset({
       documentType: initialDocumentData?.type || 'Insurance',
       customTypeName: initialDocumentData?.customTypeName || '',
-      expiryDate: null, // New historical entry, expiry set by user/AI
+      policyNumber: '',
+      startDate: null,
+      expiryDate: null,
       documentFile: null,
     });
-    setAiExtractedDate(null);
-    setAiConfidence(null);
+    setAiExtractedPolicyNumber(null);
+    setAiPolicyNumberConfidence(null);
+    setAiExtractedStartDate(null);
+    setAiStartDateConfidence(null);
+    setAiExtractedExpiryDate(null);
+    setAiExpiryDateConfidence(null);
     setSelectedFile(null);
-    setFilePreview(null); // No preview for new historical entry
+    setFilePreview(null);
     setAiError(null);
   }, [initialDocumentData, form, isOpen]);
 
@@ -132,8 +158,13 @@ export function DocumentUploadModal({
       setFilePreview(URL.createObjectURL(file)); 
       form.setValue('documentFile', file);
       setAiError(null);
-      setAiExtractedDate(null); // Reset AI fields on new file
-      setAiConfidence(null);
+      // Reset AI fields on new file
+      setAiExtractedPolicyNumber(null);
+      setAiPolicyNumberConfidence(null);
+      setAiExtractedStartDate(null);
+      setAiStartDateConfidence(null);
+      setAiExtractedExpiryDate(null);
+      setAiExpiryDateConfidence(null);
       
       const currentDocType = form.getValues('documentType');
       if (AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocType)) {
@@ -147,18 +178,33 @@ export function DocumentUploadModal({
                 documentDataUri: dataUri,
                 documentType: currentDocType.toLowerCase() as 'insurance' | 'fitness' | 'puc',
               });
-              setAiExtractedDate(result.expiryDate);
-              setAiConfidence(result.confidence);
+              
+              setAiExtractedPolicyNumber(result.policyNumber);
+              setAiPolicyNumberConfidence(result.policyNumberConfidence);
+              if (result.policyNumber) {
+                form.setValue('policyNumber', result.policyNumber);
+                toast({ title: "AI Extraction", description: `Suggested Policy #: ${result.policyNumber} (Conf: ${result.policyNumberConfidence?.toFixed(2) ?? 'N/A'})` });
+              }
+
+              setAiExtractedStartDate(result.startDate);
+              setAiStartDateConfidence(result.startDateConfidence);
+              if (result.startDate && isValid(parseISO(result.startDate))) {
+                form.setValue('startDate', parseISO(result.startDate));
+                 toast({ title: "AI Extraction", description: `Suggested Start Date: ${format(parseISO(result.startDate), DATE_FORMAT)} (Conf: ${result.startDateConfidence?.toFixed(2) ?? 'N/A'})` });
+              }
+
+              setAiExtractedExpiryDate(result.expiryDate);
+              setAiExpiryDateConfidence(result.confidence); // 'confidence' from output is for expiryDate
               if (result.expiryDate && isValid(parseISO(result.expiryDate))) {
                 form.setValue('expiryDate', parseISO(result.expiryDate));
-                toast({ title: "AI Extraction", description: `Suggested expiry date: ${format(parseISO(result.expiryDate), DATE_FORMAT)} (Confidence: ${result.confidence?.toFixed(2)})` });
-              } else if (result.expiryDate === null) {
-                 toast({ title: "AI Extraction", description: "AI could not find an expiry date.", variant: "default" });
+                toast({ title: "AI Extraction", description: `Suggested Expiry Date: ${format(parseISO(result.expiryDate), DATE_FORMAT)} (Conf: ${result.confidence?.toFixed(2) ?? 'N/A'})` });
+              } else if (result.expiryDate === null && result.startDate === null && result.policyNumber === null ) {
+                 toast({ title: "AI Extraction", description: "AI could not find any details.", variant: "default" });
               }
             } catch (e) {
               console.error("AI extraction error:", e);
-              setAiError("Failed to extract date using AI. Please enter manually.");
-              toast({ title: "AI Error", description: "AI date extraction failed.", variant: "destructive" });
+              setAiError("Failed to extract details using AI. Please enter manually.");
+              toast({ title: "AI Error", description: "AI data extraction failed.", variant: "destructive" });
             } finally {
               setIsExtractingDate(false);
             }
@@ -190,7 +236,7 @@ export function DocumentUploadModal({
         toast({ title: "File Required", description: "Please select a document file to upload.", variant: "destructive"});
         return;
     }
-    if (!values.expiryDate) {
+    if (!values.expiryDate) { // Expiry date is crucial
         toast({ title: "Expiry Date Required", description: "Please set an expiry date for the document.", variant: "destructive"});
         return;
     }
@@ -199,11 +245,17 @@ export function DocumentUploadModal({
       {
         documentType: values.documentType,
         customTypeName: values.customTypeName,
+        policyNumber: values.policyNumber,
+        startDate: values.startDate ? format(values.startDate, 'yyyy-MM-dd') : null,
         expiryDate: values.expiryDate ? format(values.expiryDate, 'yyyy-MM-dd') : null,
         documentFile: selectedFile || undefined,
       },
-      aiExtractedDate,
-      aiConfidence
+      aiExtractedPolicyNumber,
+      aiPolicyNumberConfidence,
+      aiExtractedStartDate,
+      aiStartDateConfidence,
+      aiExtractedExpiryDate,
+      aiExpiryDateConfidence
     );
     setIsSubmitting(false);
   };
@@ -212,7 +264,7 @@ export function DocumentUploadModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="font-headline">
             {modalTitle}
@@ -232,14 +284,13 @@ export function DocumentUploadModal({
                   <Select 
                     onValueChange={(value) => {
                       field.onChange(value);
-                      setAiExtractedDate(null);
-                      setAiConfidence(null);
+                      // Reset AI fields if type changes
+                      setAiExtractedPolicyNumber(null); setAiPolicyNumberConfidence(null);
+                      setAiExtractedStartDate(null); setAiStartDateConfidence(null);
+                      setAiExtractedExpiryDate(null); setAiExpiryDateConfidence(null);
                       setAiError(null);
-                      // Auto-trigger AI if file already selected might be complex here
-                      // User might need to re-select file if type changes and AI is desired
                     }} 
                     defaultValue={field.value}
-                    // Type can be changed when adding new historical entry, even if context was provided
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -287,7 +338,7 @@ export function DocumentUploadModal({
                       accept=".pdf,.jpg,.jpeg,.png" 
                       onChange={handleFileChange}
                       className="text-sm"
-                      required // File is always required for new historical entries
+                      required
                     />
                   </FormControl>
                   <FormMessage />
@@ -301,11 +352,10 @@ export function DocumentUploadModal({
               </div>
             )}
 
-
             {isExtractingDate && (
               <div className="flex items-center space-x-2 text-sm text-primary p-2 bg-primary/10 rounded-md">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Extracting expiry date using AI...</span>
+                <span>Extracting document details using AI...</span>
               </div>
             )}
             {aiError && (
@@ -314,58 +364,101 @@ export function DocumentUploadModal({
                 <span>{aiError}</span>
               </div>
             )}
-            {aiExtractedDate && !isExtractingDate && (
-              <div className="text-sm text-green-600 p-2 bg-green-50 rounded-md">
-                AI Suggested Expiry Date: {format(parseISO(aiExtractedDate), DATE_FORMAT)} (Confidence: {aiConfidence?.toFixed(2) ?? 'N/A'})
-                <FormDescription>Please verify and adjust if needed.</FormDescription>
-              </div>
+            
+            {(!isExtractingDate && (aiExtractedPolicyNumber || aiExtractedStartDate || aiExtractedExpiryDate)) && (
+                <Card className="p-3 bg-muted/50">
+                    <CardHeader className="p-0 pb-2">
+                         <CardTitle className="text-sm font-medium flex items-center"><Info className="w-4 h-4 mr-2 text-blue-500"/>AI Suggested Details:</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-xs space-y-1 p-0">
+                        {aiExtractedPolicyNumber && (
+                            <div>Policy #: {aiExtractedPolicyNumber} (Conf: {aiPolicyNumberConfidence?.toFixed(2) ?? 'N/A'})</div>
+                        )}
+                        {aiExtractedStartDate && (
+                            <div>Start Date: {format(parseISO(aiExtractedStartDate), DATE_FORMAT)} (Conf: {aiStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>
+                        )}
+                        {aiExtractedExpiryDate && (
+                            <div>Expiry Date: {format(parseISO(aiExtractedExpiryDate), DATE_FORMAT)} (Conf: {aiExpiryDateConfidence?.toFixed(2) ?? 'N/A'})</div>
+                        )}
+                         <FormDescription className="pt-1">Please verify and adjust if needed.</FormDescription>
+                    </CardContent>
+                </Card>
             )}
-
 
             <FormField
               control={form.control}
-              name="expiryDate"
+              name="policyNumber"
               render={({ field }) => (
-                <FormItem className="flex flex-col">
-                  <FormLabel>Expiry Date *</FormLabel>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <FormControl>
-                        <Button
-                          variant={"outline"}
-                          className={cn(
-                            "w-full pl-3 text-left font-normal",
-                            !field.value && "text-muted-foreground"
-                          )}
-                        >
-                          {field.value ? (
-                            format(field.value, DATE_FORMAT)
-                          ) : (
-                            <span>Pick a date</span>
-                          )}
-                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                        </Button>
-                      </FormControl>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={field.value}
-                        onSelect={field.onChange}
-                        disabled={(date) => date < new Date("1900-01-01") } 
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
-                  <FormDescription>
-                    {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ? 
-                    'AI may suggest a date. Please verify or set manually.' : 
-                    'Select the expiry date manually.'}
-                  </FormDescription>
+                <FormItem>
+                  <FormLabel>Policy / Document Number</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Enter policy or document number" {...field} value={field.value ?? ''} />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
+            
+            <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="startDate"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col">
+                      <FormLabel>Start Date</FormLabel>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant={"outline"}
+                              className={cn("w-full pl-3 text-left font-normal", !field.value && "text-muted-foreground")}
+                            >
+                              {field.value ? format(field.value, DATE_FORMAT) : <span>Pick a date</span>}
+                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="expiryDate"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col">
+                      <FormLabel>Expiry Date *</FormLabel>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant={"outline"}
+                              className={cn("w-full pl-3 text-left font-normal", !field.value && "text-muted-foreground")}
+                            >
+                              {field.value ? format(field.value, DATE_FORMAT) : <span>Pick a date</span>}
+                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                        </PopoverContent>
+                      </Popover>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+            </div>
+             <FormDescription className="text-xs">
+                {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ? 
+                'AI may suggest details if a file is selected. Please verify or set manually.' : 
+                'Please enter details manually.'}
+            </FormDescription>
+
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting || isExtractingDate}>
@@ -382,4 +475,3 @@ export function DocumentUploadModal({
     </Dialog>
   );
 }
-

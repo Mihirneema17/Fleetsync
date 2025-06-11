@@ -1,7 +1,7 @@
 
 
 import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, ReportableDocument, UserRole, VehicleComplianceStatusBreakdown } from './types';
-import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, AI_SUPPORTED_DOCUMENT_TYPES } from './constants';
+import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays, isAfter } from 'date-fns';
 
 let vehicles: Vehicle[] = [];
@@ -54,55 +54,55 @@ const initializeDummyData = () => {
     };
 
     // Create historical documents
-    for (let yearOffset = -2; yearOffset <= 0; yearOffset++) { // Create docs for last 2 years and current year
+    for (let yearOffset = -2; yearOffset <= 0; yearOffset++) { 
         DOCUMENT_TYPES.forEach(docType => {
-            // Skip AITP for Cars for some historical records to show variety
             if (docType === 'AITP' && v.type === 'Car' && yearOffset < 0) return;
 
-            const baseDate = addDays(today, yearOffset * 365); // Base for this year's document
-            let expiryDate: Date | null = null;
-            const randDays = Math.random();
+            const baseDate = addDays(today, yearOffset * 365); 
+            let expiryDateValue: Date | null = null;
+            let startDateValue: Date | null = null;
             
-            // Current year documents (yearOffset === 0)
-            if (yearOffset === 0) {
-                if (vehicleIndex === 0) { // Specific scenarios for MH12AB1234
-                    if (docType === 'Insurance') expiryDate = addDays(today, 10); 
-                    else if (docType === 'Fitness') expiryDate = addDays(today, -5); 
-                    else if (docType === 'PUC') expiryDate = addDays(today, 45); 
-                    else if (docType === 'AITP') expiryDate = null; // No AITP for this car
-                } else if (vehicleIndex === 1) { // Specific scenarios for KA01CD5678
-                    if (docType === 'Insurance') expiryDate = addDays(today, 60); 
-                    else if (docType === 'Fitness') expiryDate = addDays(today, 20); 
-                    else if (docType === 'PUC') expiryDate = addDays(today, -15); 
-                    else if (docType === 'AITP') expiryDate = addDays(today, 100); 
-                } else { // Generic for other current year docs
-                     const offset = Math.floor(randDays * 120) - 30; // -30 to +90 days from today
-                     if (docType === 'AITP' && v.type === 'Car') expiryDate = null;
-                     else if (Math.random() < 0.1) expiryDate = null; // 10% chance of missing current doc
-                     else expiryDate = addDays(today, offset);
-                }
-            } else { // Historical documents (yearOffset < 0)
-                // Expired on a random day in their respective year or slightly after
-                 expiryDate = addDays(baseDate, Math.floor(Math.random() * 365) + (Math.random() > 0.7 ? 0 : -30));
-                 // Ensure historical docs are indeed in the past
-                 if (isAfter(expiryDate, addDays(today, -1))) {
-                    expiryDate = addDays(today, - (Math.floor(Math.random()*100)+1)); // make sure it's past
+            if (yearOffset === 0) { // Current year documents
+                const offset = Math.floor(Math.random() * 120) - 30; // -30 to +90 days from today
+                if (docType === 'AITP' && v.type === 'Car') expiryDateValue = null;
+                else if (Math.random() < 0.1) expiryDateValue = null; 
+                else expiryDateValue = addDays(today, offset);
+            } else { // Historical documents
+                 expiryDateValue = addDays(baseDate, Math.floor(Math.random() * 365) + (Math.random() > 0.7 ? 0 : -30));
+                 if (isAfter(expiryDateValue, addDays(today, -1))) {
+                    expiryDateValue = addDays(today, - (Math.floor(Math.random()*100)+1)); 
                  }
             }
             
-            const docUploadedAt = expiryDate ? formatISO(addDays(expiryDate, -(Math.floor(Math.random() * 90) + 30))) : formatISO(addDays(baseDate, -Math.floor(Math.random() * 30)));
+            if (expiryDateValue) {
+                startDateValue = addDays(expiryDateValue, - (Math.floor(Math.random() * 300) + 60)); // 60 to 360 days before expiry
+            }
+
+            const docUploadedAt = expiryDateValue ? formatISO(addDays(expiryDateValue, -(Math.floor(Math.random() * 90) + 30))) : formatISO(addDays(baseDate, -Math.floor(Math.random() * 30)));
+            
+            const useAiMock = AI_SUPPORTED_DOCUMENT_TYPES.includes(docType) && Math.random() > 0.4;
+            const policyNum = docType === 'Insurance' ? `POL-${vehicleIndex}${Math.floor(Math.random()*9000)+1000}` : 
+                              (docType === 'Fitness' || docType === 'PUC') ? `CERT-${vehicleIndex}${Math.floor(Math.random()*9000)+1000}` : null;
+
             const doc: VehicleDocument = {
               id: generateId(),
               vehicleId,
               type: docType,
               customTypeName: docType === 'Other' ? 'Permit ' + Math.floor(Math.random()*10) : undefined,
-              expiryDate: expiryDate ? formatISO(expiryDate, { representation: 'date' }) : null,
-              status: 'Missing', // Will be calculated
+              policyNumber: policyNum,
+              startDate: startDateValue ? formatISO(startDateValue, { representation: 'date' }) : null,
+              expiryDate: expiryDateValue ? formatISO(expiryDateValue, { representation: 'date' }) : null,
+              status: 'Missing', 
               uploadedAt: docUploadedAt,
-              documentName: expiryDate ? `${docType}_${v.registrationNumber}_${yearOffset === 0 ? 'current' : `hist_${Math.abs(yearOffset)}`}.pdf` : undefined,
-              documentUrl: expiryDate ? `/uploads/mock/${docType}_${v.registrationNumber}.pdf` : undefined, 
-              aiExtractedDate: AI_SUPPORTED_DOCUMENT_TYPES.includes(docType) && expiryDate && Math.random() > 0.5 ? formatISO(addDays(expiryDate, Math.floor(Math.random()*6)-3), {representation: 'date'}) : null,
-              aiConfidence: AI_SUPPORTED_DOCUMENT_TYPES.includes(docType) && expiryDate && Math.random() > 0.5 ? Math.random() : null,
+              documentName: expiryDateValue ? `${docType}_${v.registrationNumber}_${yearOffset === 0 ? 'current' : `hist_${Math.abs(yearOffset)}`}.pdf` : undefined,
+              documentUrl: expiryDateValue ? `/uploads/mock/${docType}_${v.registrationNumber}.pdf` : undefined, 
+              
+              aiExtractedPolicyNumber: useAiMock && policyNum ? (Math.random() > 0.2 ? policyNum : `AI-${policyNum.substring(3)}`) : null,
+              aiPolicyNumberConfidence: useAiMock && policyNum ? Math.random() * 0.3 + 0.7 : null, // Confidence 0.7-1.0
+              aiExtractedStartDate: useAiMock && startDateValue ? formatISO(addDays(startDateValue, Math.floor(Math.random()*6)-3), {representation: 'date'}) : null,
+              aiStartDateConfidence: useAiMock && startDateValue ? Math.random() * 0.3 + 0.7 : null,
+              aiExtractedDate: useAiMock && expiryDateValue ? formatISO(addDays(expiryDateValue, Math.floor(Math.random()*6)-3), {representation: 'date'}) : null,
+              aiConfidence: useAiMock && expiryDateValue ? Math.random() * 0.3 + 0.7 : null,
             };
             doc.status = getDocumentComplianceStatus(doc.expiryDate);
             vehicleInstance.documents.push(doc);
@@ -138,14 +138,13 @@ export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
   initializeDummyData();
   const vehicle = vehicles.find(v => v.id === id);
   if (vehicle) {
-    // Sort documents within the vehicle: by type, then by expiryDate descending (nulls last or first based on preference)
     vehicle.documents.sort((a, b) => {
         if (a.type < b.type) return -1;
         if (a.type > b.type) return 1;
-        // if types are same, sort by expiry date (newest first, nulls can go last)
-        if (a.expiryDate === null) return 1;
-        if (b.expiryDate === null) return -1;
-        return parseISO(b.expiryDate).getTime() - parseISO(a.expiryDate).getTime();
+        if (a.uploadedAt && b.uploadedAt) {
+            return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
+        }
+        return 0;
     });
     return JSON.parse(JSON.stringify(vehicle));
   }
@@ -161,20 +160,21 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const newVehicle: Vehicle = {
     ...vehicleData,
     id: vehicleId,
-    documents: [], // Start with no documents; they will be added via addOrUpdateDocument
+    documents: [], 
     createdAt: nowISO,
     updatedAt: nowISO,
   };
-  // Add placeholder "Missing" documents for all standard types initially
   DOCUMENT_TYPES.forEach(docType => {
     newVehicle.documents.push({
       id: generateId(),
       vehicleId: vehicleId,
       type: docType,
       customTypeName: docType === 'Other' ? 'Default Custom' : undefined,
+      policyNumber: null,
+      startDate: null,
       expiryDate: null,
       status: 'Missing',
-      uploadedAt: nowISO, // Or perhaps a distinct 'entryCreatedAt'
+      uploadedAt: nowISO, 
     });
   });
 
@@ -222,16 +222,21 @@ export async function deleteVehicle(id: string): Promise<boolean> {
 }
 
 
-// This function now ALWAYS adds a new document record, creating a history.
 export async function addOrUpdateDocument(
   vehicleId: string,
-  docData: { // More specific type for clarity
+  docData: { 
     type: DocumentType;
     customTypeName?: string;
+    policyNumber?: string | null;
+    startDate?: string | null;
     expiryDate: string | null;
     documentName?: string;
-    aiExtractedDate?: string | null;
-    aiConfidence?: number | null;
+    aiExtractedPolicyNumber?: string | null;
+    aiPolicyNumberConfidence?: number | null;
+    aiExtractedStartDate?: string | null;
+    aiStartDateConfidence?: number | null;
+    aiExtractedDate?: string | null; // For expiry date
+    aiConfidence?: number | null;    // For expiry date
   }
 ): Promise<Vehicle | undefined> {
   initializeDummyData();
@@ -249,22 +254,27 @@ export async function addOrUpdateDocument(
     vehicleId,
     type: docData.type,
     customTypeName: docData.customTypeName,
+    policyNumber: docData.policyNumber,
+    startDate: docData.startDate,
     expiryDate: docData.expiryDate,
     documentUrl,
     documentName: docData.documentName,
     status,
     uploadedAt,
-    aiExtractedDate: docData.aiExtractedDate,
-    aiConfidence: docData.aiConfidence,
+    aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber,
+    aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence,
+    aiExtractedStartDate: docData.aiExtractedStartDate,
+    aiStartDateConfidence: docData.aiStartDateConfidence,
+    aiExtractedDate: docData.aiExtractedDate, // For expiry date
+    aiConfidence: docData.aiConfidence,       // For expiry date
   };
 
   vehicle.documents.push(newDocument);
   
-  // If an old "Missing" placeholder for this type exists, remove it
   const missingPlaceholderIndex = vehicle.documents.findIndex(d => 
     d.type === newDocument.type && 
     (d.type !== 'Other' || d.customTypeName === newDocument.customTypeName) &&
-    d.status === 'Missing' && d.id !== newDocId && !d.expiryDate // Ensure it's truly a placeholder
+    d.status === 'Missing' && d.id !== newDocId && !d.expiryDate 
   );
   if (missingPlaceholderIndex > -1) {
     vehicle.documents.splice(missingPlaceholderIndex, 1);
@@ -272,57 +282,60 @@ export async function addOrUpdateDocument(
 
   vehicles[vehicleIndex].updatedAt = formatISO(new Date()); 
 
-  internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', newDocId, { // Action is always UPLOAD_DOCUMENT for new historical entries
+  internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', newDocId, { 
     documentType: docData.type,
     customTypeName: docData.customTypeName,
+    policyNumber: docData.policyNumber,
+    startDate: docData.startDate,
     expiryDate: docData.expiryDate,
     documentName: docData.documentName,
-    aiExtractedDate: docData.aiExtractedDate,
-    aiConfidence: docData.aiConfidence,
+    aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber,
+    aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence,
+    aiExtractedStartDate: docData.aiExtractedStartDate,
+    aiStartDateConfidence: docData.aiStartDateConfidence,
+    aiExtractedExpiryDate: docData.aiExtractedDate,
+    aiExpiryDateConfidence: docData.aiConfidence,
   }, vehicle.registrationNumber);
 
   generateAlertsForVehicle(vehicle); 
   return JSON.parse(JSON.stringify(vehicle));
 }
 
-// Helper to get the latest document of a specific type for a vehicle
 const getLatestDocumentForType = (vehicle: Vehicle, docType: DocumentType, customTypeName?: string): VehicleDocument | undefined => {
     const docsOfType = vehicle.documents.filter(d => 
         d.type === docType && 
-        (docType !== 'Other' || d.customTypeName === customTypeName)
+        (docType !== 'Other' || d.customTypeName === customTypeName) &&
+        d.expiryDate // Only consider documents that have an expiry date for "latest active"
     );
     if (docsOfType.length === 0) return undefined;
-    // Sort by expiry date descending (latest expiry first), then by uploadedAt descending as a tie-breaker
+    
     docsOfType.sort((a, b) => {
+        // This sort prioritizes non-null expiry dates first, then sorts by date
         if (a.expiryDate && b.expiryDate) {
-            const diff = parseISO(b.expiryDate).getTime() - parseISO(a.expiryDate).getTime();
-            if (diff !== 0) return diff;
+             const diff = parseISO(b.expiryDate).getTime() - parseISO(a.expiryDate).getTime();
+             if (diff !== 0) return diff; // Sort by expiry date descending
         } else if (a.expiryDate) return -1; // a has expiry, b doesn't, so a is "later"
         else if (b.expiryDate) return 1;  // b has expiry, a doesn't
-        // If expiry dates are same or both null, sort by uploadedAt
+        // If expiry dates are same (or both null), sort by uploadedAt descending
         return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
     });
-    return docsOfType[0];
+    return docsOfType[0]; // The first one is the latest active one
 };
 
 
 function generateAlertsForVehicle(vehicle: Vehicle) {
-  // Clear existing non-read alerts for this user for this vehicle to avoid duplicates if docs change
   alerts = alerts.filter(a => !(a.vehicleId === vehicle.id && a.userId === MOCK_USER_ID && !a.isRead));
 
-  // For each document record, if it's expiring or overdue, generate an alert.
-  // This means a vehicle might have multiple alerts for the same document type if historical records are also overdue.
   vehicle.documents.forEach(doc => {
     const currentStatus = getDocumentComplianceStatus(doc.expiryDate);
     if ((currentStatus === 'ExpiringSoon' || currentStatus === 'Overdue') && doc.expiryDate) {
-      // Check if a similar, unread alert already exists for this specific document instance
       const existingAlert = alerts.find(a => 
           a.vehicleId === vehicle.id && 
           a.documentType === doc.type && 
           (doc.type !== 'Other' || a.customDocumentTypeName === doc.customTypeName) &&
-          a.dueDate === doc.expiryDate && // Tied to specific doc's due date
+          a.dueDate === doc.expiryDate && 
           a.userId === MOCK_USER_ID &&
-          !a.isRead // Only prevent adding if an identical UNREAD alert exists
+          !a.isRead 
       );
 
       if (!existingAlert) {
@@ -332,8 +345,8 @@ function generateAlertsForVehicle(vehicle: Vehicle) {
             vehicleRegistration: vehicle.registrationNumber,
             documentType: doc.type,
             customDocumentTypeName: doc.customTypeName,
-            dueDate: doc.expiryDate, // Alert is for this specific document's due date
-            message: `${doc.type === 'Other' && doc.customTypeName ? doc.customTypeName : doc.type} for ${vehicle.registrationNumber} (Uploaded: ${format(parseISO(doc.uploadedAt), 'MMM dd, yyyy')}) is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(doc.expiryDate), 'PPP')}` : `overdue since ${format(parseISO(doc.expiryDate), 'PPP')}`}.`,
+            dueDate: doc.expiryDate, 
+            message: `${doc.type === 'Other' && doc.customTypeName ? doc.customTypeName : doc.type} for ${vehicle.registrationNumber} (Policy: ${doc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(doc.uploadedAt), 'MMM dd, yyyy')}) is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(doc.expiryDate), 'PPP')}` : `overdue since ${format(parseISO(doc.expiryDate), 'PPP')}`}.`,
             createdAt: formatISO(new Date()),
             isRead: false,
             userId: MOCK_USER_ID,
@@ -344,8 +357,6 @@ function generateAlertsForVehicle(vehicle: Vehicle) {
 }
 
 function generateAllAlerts() {
-  // Clear all non-read alerts for the MOCK_USER_ID before regenerating
-  // This is a simplification; a real system might only update/remove alerts related to changed documents.
   alerts = alerts.filter(a => !(a.userId === MOCK_USER_ID && !a.isRead));
   vehicles.forEach(vehicle => generateAlertsForVehicle(vehicle));
 }
@@ -372,51 +383,58 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
   return false;
 }
 
-// Determines the overall compliance status of a vehicle considering all its document types.
-// A vehicle is 'MissingInfo' if any required document type doesn't have at least one entry.
-// Otherwise, its status is the "worst" status among its latest documents for each type.
 export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo' => {
   if (!vehicle.documents || vehicle.documents.length === 0) return 'MissingInfo';
   
   let overallStatus: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo' = 'Compliant';
-  let hasAtLeastOneMissingType = false;
+  let hasAtLeastOneMissingActiveDocument = false;
 
-  for (const docType of DOCUMENT_TYPES.filter(dt => dt !== 'Other')) { // Check standard types
-    const latestDoc = getLatestDocumentForType(vehicle, docType);
-    if (!latestDoc || latestDoc.status === 'Missing') { // No document of this type or latest is 'Missing'
-      hasAtLeastOneMissingType = true;
+  const relevantDocTypes = new Set<string>();
+  DOCUMENT_TYPES.forEach(dt => relevantDocTypes.add(dt === 'Other' ? `Other:${dt}` : dt)); // Use a unique key for general 'Other'
+  vehicle.documents.forEach(doc => {
+      if (doc.type === 'Other' && doc.customTypeName) {
+          relevantDocTypes.add(`Other:${doc.customTypeName}`);
+      } else {
+          relevantDocTypes.add(doc.type);
+      }
+  });
+
+
+  for (const typeKey of Array.from(relevantDocTypes)) {
+    let docType: DocumentType;
+    let customTypeName: string | undefined;
+
+    if (typeKey.startsWith('Other:')) {
+        docType = 'Other';
+        customTypeName = typeKey.split(':')[1];
+        if (customTypeName === 'Other') customTypeName = undefined; // Handles the generic "Other" without custom name if any exists
+    } else {
+        docType = typeKey as DocumentType;
+    }
+    
+    // Skip if it's the generic 'Other' type and we only want to process explicitly named 'Other' types or standard types
+    if (docType === 'Other' && !customTypeName && !DOCUMENT_TYPES.includes('Other')) continue;
+
+
+    const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeName);
+    
+    if (!latestDoc || latestDoc.status === 'Missing') { 
+      // This logic needs to be careful: a 'Missing' status for a *type* means no *active* document exists.
+      // If all docs of a type are historical and expired, that type is effectively "Missing" for current compliance.
+      // `getLatestDocumentForType` already filters for docs with expiry dates for "active" consideration.
+      // If it returns undefined, it means no such active document was found.
+      hasAtLeastOneMissingActiveDocument = true;
       break; 
     }
-    const status = latestDoc.status;
+    const status = latestDoc.status; // Status of the latest *active* document
     if (status === 'Overdue') {
       overallStatus = 'Overdue';
-      // Overdue is the worst, can break early if we want, but checking all helps find other issues.
     } else if (status === 'ExpiringSoon' && overallStatus !== 'Overdue') {
       overallStatus = 'ExpiringSoon';
     }
   }
 
-  // Handle 'Other' documents - if any 'Other' doc exists, check its latest.
-  // This logic might need refinement based on business rules for 'Other' docs.
-  const otherDocs = vehicle.documents.filter(d => d.type === 'Other');
-  const customOtherTypes = [...new Set(otherDocs.map(d => d.customTypeName).filter(Boolean))];
-  for (const customType of customOtherTypes) {
-    const latestCustomDoc = getLatestDocumentForType(vehicle, 'Other', customType);
-    if(latestCustomDoc) { // Only consider if a custom doc type exists
-        const status = latestCustomDoc.status;
-        if (status === 'Overdue') {
-            overallStatus = 'Overdue';
-        } else if (status === 'ExpiringSoon' && overallStatus !== 'Overdue') {
-            overallStatus = 'ExpiringSoon';
-        } else if (status === 'Missing' && overallStatus !== 'Overdue' && overallStatus !== 'ExpiringSoon') {
-            // If a defined 'Other' type is missing its document, it's missing info.
-            hasAtLeastOneMissingType = true; 
-        }
-    }
-  }
-
-
-  if (hasAtLeastOneMissingType) return 'MissingInfo';
+  if (hasAtLeastOneMissingActiveDocument) return 'MissingInfo';
   return overallStatus;
 };
 
@@ -435,7 +453,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
 
   let expiringSoonDocumentsCount = 0;
   let overdueDocumentsCount = 0;
-  // Specific document type counts - counts latest active documents
   const docTypeCounts = {
     expiring: {} as Record<DocumentType, number>,
     overdue: {} as Record<DocumentType, number>,
@@ -454,16 +471,28 @@ export async function getSummaryStats(): Promise<SummaryStats> {
       case 'MissingInfo': vehicleComplianceBreakdown.missingInfo++; break;
     }
     
-    // Count expiring/overdue for *latest active* documents of each type for summary cards
-    DOCUMENT_TYPES.forEach(docType => {
-        const latestDoc = getLatestDocumentForType(vehicle, docType);
-        if (latestDoc) {
-            if (latestDoc.status === 'ExpiringSoon') {
-                expiringSoonDocumentsCount++;
-                docTypeCounts.expiring[docType]++;
-            } else if (latestDoc.status === 'Overdue') {
-                overdueDocumentsCount++;
-                docTypeCounts.overdue[docType]++;
+    // Iterate over unique document types present in the vehicle to count for summary cards
+    const uniqueDocTypesInVehicle = new Map<string, VehicleDocument>();
+
+    vehicle.documents.forEach(doc => {
+        const typeKey = doc.type === 'Other' && doc.customTypeName ? `Other:${doc.customTypeName}` : doc.type;
+        const latestForType = getLatestDocumentForType(vehicle, doc.type, doc.customTypeName);
+        if (latestForType) {
+            uniqueDocTypesInVehicle.set(typeKey, latestForType);
+        }
+    });
+
+
+    uniqueDocTypesInVehicle.forEach(latestDoc => {
+        if (latestDoc.status === 'ExpiringSoon') {
+            expiringSoonDocumentsCount++;
+            if (docTypeCounts.expiring[latestDoc.type] !== undefined) {
+                 docTypeCounts.expiring[latestDoc.type]++;
+            }
+        } else if (latestDoc.status === 'Overdue') {
+            overdueDocumentsCount++;
+             if (docTypeCounts.overdue[latestDoc.type] !== undefined) {
+                docTypeCounts.overdue[latestDoc.type]++;
             }
         }
     });
@@ -486,7 +515,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
   };
 }
 
-// Reportable documents now lists ALL historical documents that match filters
 export async function getReportableDocuments(
   filters?: { 
     statuses?: Array<'ExpiringSoon' | 'Overdue' | 'Compliant' | 'Missing'>, 
@@ -501,7 +529,6 @@ export async function getReportableDocuments(
 
   allVehicles.forEach(vehicle => {
     vehicle.documents.forEach(doc => {
-      // The status on doc is already calculated based on its own expiryDate
       const status = doc.status; 
       let daysDiff = 0;
       if (doc.expiryDate) {
@@ -522,7 +549,7 @@ export async function getReportableDocuments(
       
       if (passesFilters) { 
         reportableDocs.push({
-            ...doc, // Spread the original document, status is already on it
+            ...doc, 
             vehicleRegistration: vehicle.registrationNumber,
             daysDifference: daysDiff,
         });
@@ -530,10 +557,8 @@ export async function getReportableDocuments(
     });
   });
   return reportableDocs.sort((a, b) => {
-    // Primary sort by daysDifference (ascending - overdue first, then expiring soon)
     const daysDiffCompare = a.daysDifference - b.daysDifference;
     if (daysDiffCompare !== 0) return daysDiffCompare;
-    // Secondary sort by vehicle registration if daysDiff is same
     return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
   });
 }
@@ -583,8 +608,9 @@ export async function getAuditLogs(filters?: {
   return JSON.parse(JSON.stringify(filteredLogs.sort((a,b) => parseISO(b.timestamp).getTime() - parseISO(a.timestamp).getTime())));
 }
 
-// Exported Server Action for client components to call for logging CSV exports
 export async function recordCsvExportAudit(reportName: string, formatUsed: string, filtersApplied: Record<string, any>) {
+  // 'use server'; // This directive should be at the top of the file if all functions are server actions, or in a separate actions.ts file.
+                  // For a data utility file like this, it's usually not placed inline.
   internalLogAuditEvent('EXPORT_REPORT', 'REPORT', undefined, {
     reportName,
     format: formatUsed, 
@@ -593,4 +619,3 @@ export async function recordCsvExportAudit(reportName: string, formatUsed: strin
 }
 
 initializeDummyData();
-
