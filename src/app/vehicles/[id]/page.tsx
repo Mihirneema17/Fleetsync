@@ -1,24 +1,43 @@
-import { notFound } from 'next/navigation';
-import { getVehicleById, getDocumentComplianceStatus } from '@/lib/data';
-import type { Vehicle, VehicleDocument } from '@/lib/types';
+
+"use client";
+import { notFound, useRouter } from 'next/navigation';
+import { getVehicleById, getDocumentComplianceStatus, addOrUpdateDocument } from '@/lib/data';
+import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
-import { DATE_FORMAT } from '@/lib/constants';
-// Placeholder for DocumentUploadModal
-// import { DocumentUploadModal } from '@/components/document/document-upload-modal';
+import { DATE_FORMAT, AI_SUPPORTED_DOCUMENT_TYPES } from '@/lib/constants';
+import React, { useState, useEffect } from 'react';
+import { DocumentUploadModal } from '@/components/document/document-upload-modal';
+import { useToast } from '@/hooks/use-toast';
+import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
 
-export default async function VehicleDetailPage({ params }: { params: { id: string } }) {
-  const vehicle = await getVehicleById(params.id);
+export default function VehicleDetailPage({ params }: { params: { id: string } }) {
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDocument, setEditingDocument] = useState<Partial<VehicleDocument> | null>(null);
+  const router = useRouter();
+  const { toast } = useToast();
 
-  if (!vehicle) {
-    notFound();
-  }
+  useEffect(() => {
+    async function fetchVehicle() {
+      setIsLoading(true);
+      const fetchedVehicle = await getVehicleById(params.id);
+      if (!fetchedVehicle) {
+        notFound();
+      } else {
+        setVehicle(fetchedVehicle);
+      }
+      setIsLoading(false);
+    }
+    fetchVehicle();
+  }, [params.id]);
 
   const getStatusConfig = (status: VehicleDocument['status']) => {
     switch (status) {
@@ -33,6 +52,55 @@ export default async function VehicleDetailPage({ params }: { params: { id: stri
         return { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline' as const, bgColor: 'bg-orange-50' };
     }
   };
+
+  const handleOpenUploadModal = (doc?: VehicleDocument) => {
+    setEditingDocument(doc || { type: 'Insurance' }); // Default or existing
+    setIsModalOpen(true);
+  };
+
+  const handleDocumentSubmit = async (
+    data: {
+      documentType: VehicleDocumentType;
+      customTypeName?: string;
+      expiryDate: string | null;
+      documentFile?: File;
+    },
+    aiExtractedDate?: string | null,
+    aiConfidence?: number | null
+  ) => {
+    if (!vehicle) return;
+    try {
+      const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
+        type: data.documentType,
+        customTypeName: data.customTypeName,
+        expiryDate: data.expiryDate,
+        documentName: data.documentFile?.name,
+        aiExtractedDate,
+        aiConfidence,
+      });
+      if (updatedVehicle) {
+        setVehicle(updatedVehicle);
+        toast({ title: 'Success', description: `Document ${editingDocument?.id ? 'updated' : 'added'} successfully.` });
+      } else {
+        throw new Error('Failed to update vehicle from server');
+      }
+      setIsModalOpen(false);
+      setEditingDocument(null);
+      router.refresh(); // To ensure data consistency if alerts/summaries are affected
+    } catch (error) {
+      console.error('Failed to submit document:', error);
+      toast({ title: 'Error', description: 'Failed to save document. Please try again.', variant: 'destructive' });
+    }
+  };
+
+
+  if (isLoading || !vehicle) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
 
 
   return (
@@ -49,8 +117,9 @@ export default async function VehicleDetailPage({ params }: { params: { id: stri
             <Link href={`/vehicles/${vehicle.id}/edit`}>
                 <Button variant="outline"><Edit className="mr-2 h-4 w-4" /> Edit Vehicle</Button>
             </Link>
-            {/* <DocumentUploadModal vehicleId={vehicle.id} triggerButton={<Button><UploadCloud className="mr-2 h-4 w-4" /> Upload Document</Button>} /> */}
-            <Button><UploadCloud className="mr-2 h-4 w-4" /> Upload Document</Button> {/* Placeholder */}
+            <Button onClick={() => handleOpenUploadModal()}>
+                <UploadCloud className="mr-2 h-4 w-4" /> Upload Document
+            </Button>
         </div>
       </div>
 
@@ -86,31 +155,32 @@ export default async function VehicleDetailPage({ params }: { params: { id: stri
               </TableHeader>
               <TableBody>
                 {vehicle.documents.map((doc) => {
-                  const status = getDocumentComplianceStatus(doc.expiryDate);
+                  const status = getDocumentComplianceStatus(doc.expiryDate); // Re-evaluate status client-side too
                   const config = getStatusConfig(status);
                   const StatusIcon = config.icon;
                   return (
-                    <TableRow key={doc.id} className={cn(config.bgColor?.replace('bg-','hover:bg-opacity-80 hover:bg-'))}>
+                    <TableRow key={doc.id} className={cn(config.bgColor?.replace('bg-','hover:bg-opacity-80 hover:'), doc.status === "Missing" ? "opacity-60" : "")}>
                       <TableCell className="font-medium">
                         <FileText className="inline mr-2 h-4 w-4 text-muted-foreground" />
                         {doc.type === 'Other' && doc.customTypeName ? doc.customTypeName : doc.type}
                       </TableCell>
                       <TableCell>
-                        {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : 'N/A'}
+                        {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : (
+                          <span className="text-muted-foreground italic">Not Set</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge variant={config.badgeVariant} className={cn(
-                           config.status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
-                           config.status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
+                           status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
+                           status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
                         )}>
                           <StatusIcon className={cn("mr-1 h-3 w-3", config.color)} />
                           {status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" className="mr-2">
-                           {/* <DocumentUploadModal vehicleId={vehicle.id} documentType={doc.type} customTypeName={doc.customTypeName} initialDocument={doc} triggerButton={<><UploadCloud className="mr-1 h-4 w-4" /> Update</>} /> */}
-                           <UploadCloud className="mr-1 h-4 w-4" /> Update {/* Placeholder */}
+                        <Button variant="ghost" size="sm" className="mr-2" onClick={() => handleOpenUploadModal(doc)}>
+                           <UploadCloud className="mr-1 h-4 w-4" /> {doc.expiryDate ? 'Update' : 'Upload'}
                         </Button>
                         {doc.documentUrl && (
                           <Button variant="link" size="sm" asChild>
@@ -130,12 +200,23 @@ export default async function VehicleDetailPage({ params }: { params: { id: stri
             </div>
           )}
         </CardContent>
-        <CardFooter>
-            <Button variant="outline">
-                <FileText className="mr-2 h-4 w-4" /> Add Custom Document
+        {/* <CardFooter>
+            <Button variant="outline" onClick={() => handleOpenUploadModal({ type: 'Other' })}>
+                <FileText className="mr-2 h-4 w-4" /> Add Custom Document Type
             </Button>
-        </CardFooter>
+        </CardFooter> */}
       </Card>
+
+      {isModalOpen && vehicle && (
+        <DocumentUploadModal
+          isOpen={isModalOpen}
+          onClose={() => { setIsModalOpen(false); setEditingDocument(null); }}
+          onSubmit={handleDocumentSubmit}
+          vehicleId={vehicle.id}
+          initialDocumentData={editingDocument}
+          extractExpiryDateFn={extractExpiryDate}
+        />
+      )}
     </div>
   );
 }

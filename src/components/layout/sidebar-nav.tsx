@@ -16,32 +16,47 @@ import {
   SidebarMenuSeparator,
   SidebarMenuBadge,
   useSidebar,
-} from '@/components/ui/sidebar'; // Assuming this is the path to your sidebar components
+} from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { SheetTitle } from '@/components/ui/sheet'; // Added import for SheetTitle
+import { SheetTitle } from '@/components/ui/sheet';
+import React, { useEffect, useState } from 'react';
+import { getAlerts } from '@/lib/data'; // Import getAlerts
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
   { href: '/vehicles', label: 'Vehicles', icon: Car },
-  // { href: '/documents', label: 'Documents', icon: FileText }, // Future
-  { href: '/alerts', label: 'Alerts', icon: Bell, badgeCount: 0 }, // Placeholder for badge
-  // { href: '/users', label: 'User Management', icon: Users }, // Future
-  // { href: '/settings', label: 'Settings', icon: Settings }, // Future
+  { href: '/alerts', label: 'Alerts', icon: Bell, id: 'alertsLink' },
 ];
 
 export function SidebarNav() {
   const pathname = usePathname();
-  const { state: sidebarState, isMobile } = useSidebar(); // Get sidebar state and isMobile
+  const { state: sidebarState, isMobile } = useSidebar();
+  const [unreadAlertsCount, setUnreadAlertsCount] = useState(0);
 
-  // Placeholder for fetching alert count
-  const unreadAlertsCount = 0; // Replace with actual data fetching
+  useEffect(() => {
+    async function fetchAlertCount() {
+      try {
+        const unreadAlerts = await getAlerts(true); // true for onlyUnread
+        setUnreadAlertsCount(unreadAlerts.length);
+      } catch (error) {
+        console.error("Failed to fetch alert count:", error);
+        setUnreadAlertsCount(0); // Default to 0 on error
+      }
+    }
+    fetchAlertCount();
+    
+    // Optional: set up an interval to refresh count, or use a more sophisticated state management
+    const intervalId = setInterval(fetchAlertCount, 60000); // Refresh every minute
+    return () => clearInterval(intervalId);
+  }, []);
+
 
   return (
     <Sidebar side="left" variant="sidebar" collapsible="icon">
       <SidebarHeader className="p-4">
         <Link href="/" className="flex items-center gap-2">
           <Home className="h-8 w-8 text-primary" />
-          {isMobile ? (
+          {isMobile && sidebarState === 'collapsed' ? ( // Check if mobile and collapsed
             <SheetTitle className="text-xl font-bold font-headline text-primary">FleetSync</SheetTitle>
           ) : (
             sidebarState === 'expanded' && (
@@ -54,24 +69,28 @@ export function SidebarNav() {
         <SidebarMenu>
           {navItems.map((item) => (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href}>
-                <SidebarMenuButton
-                  className={cn(
-                    'w-full justify-start',
-                    pathname === item.href ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
-                  )}
-                  isActive={pathname === item.href}
-                  tooltip={sidebarState === 'collapsed' ? item.label : undefined}
-                >
+              <SidebarMenuButton
+                asChild
+                className={cn(
+                  'w-full justify-start',
+                  pathname === item.href ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
+                )}
+                isActive={pathname === item.href}
+                tooltip={sidebarState === 'collapsed' ? item.label : undefined}
+              >
+                <Link href={item.href}>
                   <item.icon className="h-5 w-5 mr-3" />
                   {sidebarState === 'expanded' && <span className="truncate">{item.label}</span>}
-                  {item.label === 'Alerts' && unreadAlertsCount > 0 && sidebarState === 'expanded' && (
+                  {item.id === 'alertsLink' && unreadAlertsCount > 0 && sidebarState === 'expanded' && (
                      <SidebarMenuBadge className="ml-auto bg-destructive text-destructive-foreground">
                        {unreadAlertsCount}
                      </SidebarMenuBadge>
                   )}
-                </SidebarMenuButton>
-              </Link>
+                   {item.id === 'alertsLink' && unreadAlertsCount > 0 && sidebarState === 'collapsed' && (
+                     <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-destructive border-2 border-[var(--sidebar-background)]" />
+                  )}
+                </Link>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
