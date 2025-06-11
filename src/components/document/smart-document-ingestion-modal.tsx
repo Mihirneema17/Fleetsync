@@ -42,11 +42,14 @@ import type { DocumentType } from '@/lib/types';
 import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { processSmartDocumentAndSave } from '@/app/vehicles/actions';
+import { useRouter } from 'next/navigation';
 
-const suggestableDocumentTypesEnum = DOCUMENT_TYPES.filter(type => type !== 'Other'); // For the schema, AI might suggest 'Other'
+const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
+// Schema for the form the user interacts with, potentially corrected from AI suggestions
 const smartIngestFormSchema = z.object({
-  vehicleRegistrationNumber: z.string().min(1, "Vehicle registration is required.").max(20, "Registration number too long.").optional().nullable(),
+  vehicleRegistrationNumber: z.string().min(1, "Vehicle registration is required.").max(20, "Registration number too long.").nullable(),
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]], {
     required_error: "Document type is required.",
   }),
@@ -72,18 +75,16 @@ const smartIngestFormSchema = z.object({
   path: ["startDate"],
 });
 
-type SmartIngestFormValues = z.infer<typeof smartIngestFormSchema>;
+export type SmartIngestFormValues = z.infer<typeof smartIngestFormSchema>;
 
 interface SmartDocumentIngestionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  // onProcess: (file: File, aiData: SmartIngestOutput, formData: SmartIngestFormValues) => Promise<void>; 
 }
 
 export function SmartDocumentIngestionModal({
   isOpen,
   onClose,
-  // onProcess,
 }: SmartDocumentIngestionModalProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
@@ -91,6 +92,7 @@ export function SmartDocumentIngestionModal({
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [isSubmittingForm, setIsSubmittingForm] = useState(false);
   const { toast } = useToast();
+  const router = useRouter();
 
   const form = useForm<SmartIngestFormValues>({
     resolver: zodResolver(smartIngestFormSchema),
@@ -112,22 +114,31 @@ export function SmartDocumentIngestionModal({
         vehicleRegistrationNumber: aiResults.vehicleRegistrationNumber,
         documentType: aiResults.documentTypeSuggestion && DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType)
           ? aiResults.documentTypeSuggestion as DocumentType
-          : 'Other', // Default to 'Other' if suggestion is not in our strict list or is 'Unknown'
+          : 'Other', 
         customTypeName: (aiResults.documentTypeSuggestion === 'Other' || aiResults.documentTypeSuggestion === 'Unknown') 
           ? aiResults.customTypeNameSuggestion 
-          : (aiResults.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ? aiResults.documentTypeSuggestion : null), // if AI suggests a type not in enum, treat as custom for 'Other'
+          : (aiResults.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ? aiResults.documentTypeSuggestion : null),
         policyNumber: aiResults.policyNumber,
         startDate: aiResults.startDate && isValid(parseISO(aiResults.startDate)) ? parseISO(aiResults.startDate) : null,
         expiryDate: aiResults.expiryDate && isValid(parseISO(aiResults.expiryDate)) ? parseISO(aiResults.expiryDate) : null,
       });
+    } else {
+      form.reset({ // Reset to defaults if aiResults is null (e.g. new file selected or modal opened fresh)
+        vehicleRegistrationNumber: null,
+        documentType: 'Insurance',
+        customTypeName: null,
+        policyNumber: null,
+        startDate: null,
+        expiryDate: null,
+      });
     }
-  }, [aiResults, form]);
+  }, [aiResults, form, isOpen]); // Add isOpen to ensure reset when modal is re-opened
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     setAiResults(null);
     setProcessingError(null);
-    form.reset(); // Reset form when new file is selected
+    // form.reset(); // Reset form when new file is selected - handled by useEffect now
 
     if (file) {
       if (file.size > 5 * 1024 * 1024) { // 5MB limit
@@ -156,7 +167,7 @@ export function SmartDocumentIngestionModal({
     }
     setIsProcessingAI(true);
     setProcessingError(null);
-    setAiResults(null);
+    setAiResults(null); // Clear previous AI results
 
     try {
       const reader = new FileReader();
@@ -167,7 +178,7 @@ export function SmartDocumentIngestionModal({
           setAiResults(result);
           toast({
             title: "AI Processing Complete",
-            description: "Review the extracted details below.",
+            description: "Review the extracted details below and correct if necessary.",
           });
         } catch (e) {
           console.error("Smart Ingest AI error:", e);
@@ -200,17 +211,52 @@ export function SmartDocumentIngestionModal({
         toast({ title: "Error", description: "No file selected.", variant: "destructive"});
         return;
     }
+    if (!values.vehicleRegistrationNumber) {
+        toast({ title: "Error", description: "Vehicle registration number is required.", variant: "destructive"});
+        form.setError("vehicleRegistrationNumber", { type: "manual", message: "Vehicle registration number is required."});
+        return;
+    }
     setIsSubmittingForm(true);
-    console.log("Form Data to be saved (Step F target):", values);
-    console.log("Selected File for upload:", selectedFile.name);
-    console.log("Original AI Results for reference:", aiResults);
-    
-    // Placeholder for Step F: Call server action to save data
-    // await onProcess(selectedFile, aiResults!, values); 
-    
-    toast({ title: "Data Logged (Dev)", description: "Form data logged to console. Save logic in next step."});
-    // resetAndClose(); // Or keep open for further steps
-    setIsSubmittingForm(false);
+
+    const clientSideDocId = generateClientSideId();
+    const mockFileDetails = {
+      name: selectedFile.name,
+      // In a real app, this URL would come from a file upload service
+      mockUrl: `/uploads/mock/vehicle_smart_ingest/doc_${clientSideDocId}/${selectedFile.name}`,
+    };
+
+    try {
+      const result = await processSmartDocumentAndSave(
+        values.vehicleRegistrationNumber, // Pass reg number separately for easier lookup
+        values, 
+        mockFileDetails, 
+        aiResults
+      );
+
+      if (result.success) {
+        toast({
+          title: "Document Saved",
+          description: `Document successfully added to vehicle ${values.vehicleRegistrationNumber}.`,
+        });
+        router.refresh(); // Revalidate paths to update data across the app
+        resetAndClose();
+      } else {
+        toast({
+          title: "Save Failed",
+          description: result.error || "Could not save the document.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error submitting smart ingest form:", error);
+      toast({
+        title: "Submission Error",
+        description: "An unexpected error occurred while saving.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmittingForm(false);
+    }
   };
 
   const resetAndClose = () => {
@@ -222,9 +268,9 @@ export function SmartDocumentIngestionModal({
     onClose();
   };
 
-  const ConfidenceDisplay: React.FC<{ score: number | null | undefined }> = ({ score }) => {
+  const ConfidenceDisplay: React.FC<{ score: number | null | undefined; prefix?: string }> = ({ score, prefix = "AI Conf:" }) => {
     if (score === null || score === undefined) return null;
-    return <FormDescription className="text-xs text-blue-600">AI Confidence: {(score * 100).toFixed(0)}%</FormDescription>;
+    return <FormDescription className="text-xs text-blue-600 mt-0.5">{prefix} {(score * 100).toFixed(0)}%</FormDescription>;
   };
 
   if (!isOpen) return null;
@@ -235,7 +281,7 @@ export function SmartDocumentIngestionModal({
         <DialogHeader>
           <DialogTitle className="font-headline">Smart Document Upload & Review</DialogTitle>
           <DialogDescription>
-            Upload a document. AI will attempt to extract details. Review and correct before saving.
+            Upload a document. AI will attempt to extract details. Review and correct before saving. Max 5MB. (PDF, JPG, PNG, WEBP)
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[70vh] p-1">
@@ -246,15 +292,16 @@ export function SmartDocumentIngestionModal({
               accept=".pdf,.jpg,.jpeg,.png,.webp"
               onChange={handleFileChange}
               disabled={isProcessingAI || isSubmittingForm}
+              className="text-sm"
             />
             {processingError && (
-              <div className="text-sm text-destructive flex items-center">
+              <div className="text-sm text-destructive flex items-center p-2 bg-destructive/10 rounded-md">
                 <AlertCircle className="mr-2 h-4 w-4" /> {processingError}
               </div>
             )}
             {selectedFile && !processingError && (
               <div className="text-sm text-muted-foreground">
-                Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB)
+                Selected: {selectedFile.name} ({(selectedFile.size / (1024*1024)).toFixed(2)} MB)
               </div>
             )}
 
@@ -265,7 +312,7 @@ export function SmartDocumentIngestionModal({
               </div>
             )}
 
-            {(aiResults || selectedFile) && !isProcessingAI && ( // Show form if AI results exist OR if a file is selected (even if AI failed, allow manual entry)
+            {(aiResults || selectedFile) && !isProcessingAI && ( 
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 pt-4 border-t mt-4">
                    <FormField
@@ -273,7 +320,7 @@ export function SmartDocumentIngestionModal({
                     name="vehicleRegistrationNumber"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Vehicle Registration Number</FormLabel>
+                        <FormLabel>Vehicle Registration Number *</FormLabel>
                         <FormControl>
                           <Input placeholder="e.g., MH12AB1234" {...field} value={field.value ?? ''} />
                         </FormControl>
@@ -288,7 +335,7 @@ export function SmartDocumentIngestionModal({
                     name="documentType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Document Type</FormLabel>
+                        <FormLabel>Document Type *</FormLabel>
                         <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value}>
                           <FormControl>
                             <SelectTrigger>
@@ -313,11 +360,10 @@ export function SmartDocumentIngestionModal({
                       name="customTypeName"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Custom Document Name</FormLabel>
+                          <FormLabel>Custom Document Name *</FormLabel>
                           <FormControl>
                             <Input placeholder="e.g., Road Tax Receipt" {...field} value={field.value ?? ''} />
                           </FormControl>
-                           {/* No specific confidence for custom name, it's part of doc type suggestion */}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -326,7 +372,7 @@ export function SmartDocumentIngestionModal({
                   
                   {(watchDocumentType !== 'Other' && aiResults?.customTypeNameSuggestion && aiResults?.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ) && (
                     <FormDescription className="text-xs text-blue-600">
-                        AI suggested an original type: '{aiResults.documentTypeSuggestion}'. It has been mapped to 'Other'. Consider using '{aiResults.customTypeNameSuggestion}' as Custom Name.
+                        AI suggested an original type: '{aiResults.documentTypeSuggestion}'. It has been mapped to 'Other'. Original AI suggested custom name: '{aiResults.customTypeNameSuggestion}'. Please verify.
                     </FormDescription>
                   )}
 
@@ -402,6 +448,9 @@ export function SmartDocumentIngestionModal({
                       )}
                     />
                   </div>
+                   <FormDescription className="text-xs italic">
+                     Fields marked with * are required. Please review AI suggestions and correct if necessary before saving.
+                   </FormDescription>
                   <DialogFooter className="sm:justify-between pt-4">
                     <DialogClose asChild>
                        <Button type="button" variant="outline" onClick={resetAndClose} disabled={isProcessingAI || isSubmittingForm}>
@@ -422,7 +471,6 @@ export function SmartDocumentIngestionModal({
           </div>
         </ScrollArea>
         
-        { /* Fallback for when no file is selected or AI hasn't processed, but modal is open */ }
         {(!selectedFile && !isProcessingAI && !aiResults) && (
              <DialogFooter className="sm:justify-end pt-4">
                  <DialogClose asChild>
