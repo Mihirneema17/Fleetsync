@@ -1,5 +1,5 @@
 
-import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, ReportableDocument, UserRole } from './types';
+import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, ReportableDocument, UserRole, VehicleComplianceStatusBreakdown } from './types';
 import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, AI_SUPPORTED_DOCUMENT_TYPES } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays } from 'date-fns';
 
@@ -330,6 +330,27 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
   return false;
 }
 
+const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo' => {
+  if (!vehicle.documents || vehicle.documents.length === 0) return 'MissingInfo';
+  
+  let hasOverdue = false;
+  let hasExpiringSoon = false;
+  let hasMissingDocument = vehicle.documents.some(doc => getDocumentComplianceStatus(doc.expiryDate) === 'Missing');
+
+  if (hasMissingDocument) return 'MissingInfo'; // If any doc is 'Missing', overall is 'MissingInfo'
+
+  for (const doc of vehicle.documents) {
+    const status = getDocumentComplianceStatus(doc.expiryDate);
+    if (status === 'Overdue') hasOverdue = true;
+    if (status === 'ExpiringSoon') hasExpiringSoon = true;
+  }
+
+  if (hasOverdue) return 'Overdue';
+  if (hasExpiringSoon) return 'ExpiringSoon';
+  return 'Compliant';
+};
+
+
 export async function getSummaryStats(): Promise<SummaryStats> {
   initializeDummyData();
   let compliantVehiclesCount = 0;
@@ -344,12 +365,28 @@ export async function getSummaryStats(): Promise<SummaryStats> {
   let overduePUC = 0;
   let expiringAITP = 0;
   let overdueAITP = 0;
+
+  let vehicleComplianceBreakdown: VehicleComplianceStatusBreakdown = {
+    compliant: 0,
+    expiringSoon: 0,
+    overdue: 0,
+    missingInfo: 0,
+    total: 0,
+  };
   
   const allVehicles = await getVehicles(); 
+  vehicleComplianceBreakdown.total = allVehicles.length;
 
   allVehicles.forEach(vehicle => {
-    let isVehicleCompliantOverall = true;
+    const overallStatus = getOverallVehicleCompliance(vehicle);
+    switch(overallStatus) {
+      case 'Compliant': vehicleComplianceBreakdown.compliant++; break;
+      case 'ExpiringSoon': vehicleComplianceBreakdown.expiringSoon++; break;
+      case 'Overdue': vehicleComplianceBreakdown.overdue++; break;
+      case 'MissingInfo': vehicleComplianceBreakdown.missingInfo++; break;
+    }
     
+    // Original document-level counts
     vehicle.documents.forEach(doc => {
       const currentStatus = getDocumentComplianceStatus(doc.expiryDate);
       
@@ -367,19 +404,18 @@ export async function getSummaryStats(): Promise<SummaryStats> {
         if (doc.type === 'PUC') overduePUC++;
         if (doc.type === 'AITP') overdueAITP++;
       }
-      if (currentStatus === 'Overdue' || currentStatus === 'Missing') {
-        isVehicleCompliantOverall = false;
-      }
     });
-
-    if (isVehicleCompliantOverall && vehicle.documents.length > 0 && !vehicle.documents.some(d => d.status === 'Missing')) { 
-        compliantVehiclesCount++;
-    }
   });
+  // The definition of compliantVehicles in SummaryStats might slightly differ from the pie chart's "compliant"
+  // SummaryStats.compliantVehicles counts vehicles where ALL documents are compliant (and not missing).
+  // The pie chart "compliant" counts vehicles that are not Overdue and not ExpiringSoon.
+  // For consistency, let's use the pie chart's definition for SummaryStats.compliantVehicles as well.
+  compliantVehiclesCount = vehicleComplianceBreakdown.compliant;
+
 
   return {
     totalVehicles: allVehicles.length,
-    compliantVehicles: compliantVehiclesCount,
+    compliantVehicles: compliantVehiclesCount, // Use the new breakdown
     expiringSoonDocuments: expiringSoonDocumentsCount,
     overdueDocuments: overdueDocumentsCount,
     expiringInsurance,
@@ -390,6 +426,7 @@ export async function getSummaryStats(): Promise<SummaryStats> {
     overduePUC,
     expiringAITP,
     overdueAITP,
+    vehicleComplianceBreakdown // Add this for the chart
   };
 }
 
@@ -436,19 +473,20 @@ export async function getReportableDocuments(
       }
     });
   });
-  logAuditEvent('VIEW_REPORT', 'REPORT', undefined, { reportName: 'ExpiringDocuments', filters });
+  // logAuditEvent('VIEW_REPORT', 'REPORT', undefined, { reportName: 'ExpiringDocuments', filters }); // Logging moved to component to capture client-side filters
   return reportableDocs.sort((a, b) => a.daysDifference - b.daysDifference);
 }
 
 
 export async function getCurrentUser(): Promise<User> {
-  const isAdmin = MOCK_USER_ID === "user_123_admin";
+  // const isAdmin = MOCK_USER_ID === "user_123_admin"; // Old check
+  const role: UserRole = MOCK_USER_ID.includes('_admin') ? 'admin' : MOCK_USER_ID.includes('_manager') ? 'manager' : 'viewer';
   return {
     id: MOCK_USER_ID,
-    name: isAdmin ? "Admin User" : "Demo User",
-    email: isAdmin ? "admin@example.com" : "user@example.com",
-    avatarUrl: `https://placehold.co/100x100.png?text=${isAdmin ? 'AU' : 'DU'}`,
-    role: isAdmin ? 'admin' : 'manager' 
+    name: role === 'admin' ? "Admin User" : role === 'manager' ? "Fleet Manager" : "Demo User",
+    email: role === 'admin' ? "admin@example.com" : role === 'manager' ? "manager@example.com" : "user@example.com",
+    avatarUrl: `https://placehold.co/100x100.png?text=${role === 'admin' ? 'AU' : role === 'manager' ? 'FM' : 'DU'}`,
+    role: role
   };
 }
 
@@ -473,6 +511,7 @@ export async function getAuditLogs(filters?: {
   }
   if (filters?.dateFrom) {
     const from = parseISO(filters.dateFrom);
+    from.setHours(0,0,0,0);
     filteredLogs = filteredLogs.filter(log => !isBefore(parseISO(log.timestamp), from));
   }
   if (filters?.dateTo) {
@@ -485,13 +524,10 @@ export async function getAuditLogs(filters?: {
 }
 
 export async function recordCsvExportAudit(reportName: string, format: string, filters: Record<string, any>) {
-  // This function acts as a Server Action when called from a client component.
-  // No 'use server' needed here if the file src/lib/data.ts is not marked with 'use client'.
-  // Next.js handles the server-side execution.
   logAuditEvent('EXPORT_REPORT', 'REPORT', undefined, {
     reportName,
     format,
-    filters,
+    filtersApplied: filters, // Renamed for clarity in audit log
   });
 }
 

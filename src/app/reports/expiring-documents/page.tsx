@@ -16,9 +16,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
-import { ClipboardList, AlertTriangle, Clock, CheckCircle2, Search, FilterX, Car, Download, CalendarIcon, ArrowUpDown } from 'lucide-react';
+import { ClipboardList, AlertTriangle, Clock, CheckCircle2, Search, FilterX, Car, Download, CalendarIcon, ArrowUpDown, Loader2 } from 'lucide-react';
 import { DOCUMENT_TYPES, DATE_FORMAT } from '@/lib/constants';
 import type { DateRange } from "react-day-picker";
+import { useToast } from '@/hooks/use-toast';
 
 type StatusFilter = 'All' | 'Overdue' | 'ExpiringSoon' | 'Compliant' | 'Missing';
 type DocumentTypeFilter = 'All' | DocType;
@@ -57,32 +58,39 @@ export default function ExpiringDocumentsReportPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
 
   const [documents, setDocuments] = useState<ReportableDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Filters from URL state
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(searchParams.get('status') as StatusFilter || 'ExpiringSoon'); // Default to ExpiringSoon
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(searchParams.get('status') as StatusFilter || 'ExpiringSoon');
   const [docTypeFilter, setDocTypeFilter] = useState<DocumentTypeFilter>(searchParams.get('docType') as DocumentTypeFilter || 'All');
   const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
-  const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
-    from: searchParams.get('from') ? parseISO(searchParams.get('from')!) : undefined,
-    to: searchParams.get('to') ? parseISO(searchParams.get('to')!) : undefined,
+  const [dateRange, setDateRange] = React.useState<DateRange | undefined>(() => {
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    if (from && isValid(parseISO(from))) {
+      return { from: parseISO(from), to: to && isValid(parseISO(to)) ? parseISO(to) : undefined };
+    }
+    return undefined;
   });
 
-  // Sorting state
   const [sortColumn, setSortColumn] = useState<SortableColumn>('daysDifference');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const updateUrlParams = useCallback(() => {
-    const currentParams = new URLSearchParams();
-    if (statusFilter !== 'All') currentParams.set('status', statusFilter);
-    if (docTypeFilter !== 'All') currentParams.set('docType', docTypeFilter);
-    if (searchTerm) currentParams.set('search', searchTerm);
-    if (dateRange?.from) currentParams.set('from', format(dateRange.from, 'yyyy-MM-dd'));
-    if (dateRange?.to) currentParams.set('to', format(dateRange.to, 'yyyy-MM-dd'));
-    router.push(`${pathname}?${currentParams.toString()}`);
-  }, [statusFilter, docTypeFilter, searchTerm, dateRange, router, pathname]);
+    const currentParams = new URLSearchParams(searchParams.toString()); // Preserve existing params
+    if (statusFilter !== 'All' && statusFilter) currentParams.set('status', statusFilter); else currentParams.delete('status');
+    if (docTypeFilter !== 'All' && docTypeFilter) currentParams.set('docType', docTypeFilter); else currentParams.delete('docType');
+    if (searchTerm) currentParams.set('search', searchTerm); else currentParams.delete('search');
+    if (dateRange?.from) currentParams.set('from', format(dateRange.from, 'yyyy-MM-dd')); else currentParams.delete('from');
+    if (dateRange?.to) currentParams.set('to', format(dateRange.to, 'yyyy-MM-dd')); else currentParams.delete('to');
+    
+    // Only push if params actually changed to avoid redundant navigation
+    if (currentParams.toString() !== searchParams.toString()) {
+       router.push(`${pathname}?${currentParams.toString()}`, { scroll: false });
+    }
+  }, [statusFilter, docTypeFilter, searchTerm, dateRange, router, pathname, searchParams]);
 
   useEffect(() => {
     async function fetchData() {
@@ -101,23 +109,30 @@ export default function ExpiringDocumentsReportPage() {
       setIsLoading(false);
     }
     fetchData();
-  }, [statusFilter, docTypeFilter]); // Server-side filters
+    // Log view report only when filters relevant to data fetching change
+    recordCsvExportAudit('ExpiringDocuments', 'VIEW', { statusFilter, docTypeFilter }); 
+  }, [statusFilter, docTypeFilter]); 
 
-  // Client-side filtering (search and date range)
+  useEffect(() => {
+    updateUrlParams();
+  }, [statusFilter, docTypeFilter, searchTerm, dateRange, updateUrlParams]);
+
+
   const clientFilteredDocuments = useMemo(() => {
     let filtered = documents;
 
     if (searchTerm) {
+      const lowerSearchTerm = searchTerm.toLowerCase();
       filtered = filtered.filter(doc => 
-        doc.vehicleRegistration.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (doc.type === 'Other' && doc.customTypeName?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        doc.type.toLowerCase().includes(searchTerm.toLowerCase())
+        doc.vehicleRegistration.toLowerCase().includes(lowerSearchTerm) ||
+        (doc.type === 'Other' && doc.customTypeName?.toLowerCase().includes(lowerSearchTerm)) ||
+        doc.type.toLowerCase().includes(lowerSearchTerm)
       );
     }
 
     if (dateRange?.from || dateRange?.to) {
         filtered = filtered.filter(doc => {
-            if (!doc.expiryDate) return false;
+            if (!doc.expiryDate) return false; // Documents without expiry date are excluded by date range filter
             const expiry = parseISO(doc.expiryDate);
             const fromOk = dateRange.from ? expiry >= dateRange.from : true;
             const toOk = dateRange.to ? expiry <= dateRange.to : true;
@@ -128,7 +143,6 @@ export default function ExpiringDocumentsReportPage() {
   }, [documents, searchTerm, dateRange]);
 
 
-  // Client-side sorting
   const sortedDocuments = useMemo(() => {
     return [...clientFilteredDocuments].sort((a, b) => {
       let valA: any = a[sortColumn];
@@ -137,10 +151,19 @@ export default function ExpiringDocumentsReportPage() {
       if (sortColumn === 'expiryDate') {
         valA = a.expiryDate ? parseISO(a.expiryDate).getTime() : (sortDirection === 'asc' ? Infinity : -Infinity);
         valB = b.expiryDate ? parseISO(b.expiryDate).getTime() : (sortDirection === 'asc' ? Infinity : -Infinity);
-      } else if (typeof valA === 'string') {
+      } else if (sortColumn === 'daysDifference') {
+        // Ensure consistent sorting for missing expiry dates based on direction
+        valA = a.expiryDate ? a.daysDifference : (sortDirection === 'asc' ? Infinity : -Infinity);
+        valB = b.expiryDate ? b.daysDifference : (sortDirection === 'asc' ? Infinity : -Infinity);
+      } else if (typeof valA === 'string' && typeof valB === 'string') {
         valA = valA.toLowerCase();
         valB = valB.toLowerCase();
+      } else if (valA === null || valA === undefined) { // Handle nulls/undefined for other types
+        return sortDirection === 'asc' ? 1 : -1;
+      } else if (valB === null || valB === undefined) {
+        return sortDirection === 'asc' ? -1 : 1;
       }
+
 
       if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
       if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
@@ -153,7 +176,8 @@ export default function ExpiringDocumentsReportPage() {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortColumn(column);
-      setSortDirection('asc');
+      // Default to ascending, except for expiryDate and daysDifference which might make more sense descending initially
+      setSortDirection(column === 'expiryDate' || column === 'daysDifference' ? 'asc' : 'asc');
     }
   };
 
@@ -162,21 +186,15 @@ export default function ExpiringDocumentsReportPage() {
     setDocTypeFilter('All');
     setSearchTerm('');
     setDateRange(undefined);
-    router.push(pathname || '/reports/expiring-documents'); // Go to base path to clear URL
+    // updateUrlParams will be called by the useEffect dependency change
   };
   
-  useEffect(() => {
-    // This effect runs when any of the filter states change, updating the URL.
-    updateUrlParams();
-  }, [updateUrlParams]);
-
-
   const downloadCSV = async () => {
     if (sortedDocuments.length === 0) {
-      alert("No data to export.");
+      toast({ title: "No Data", description: "No data available to export with current filters.", variant: "default" });
       return;
     }
-    const headers = ["Vehicle Registration", "Document Type", "Custom Type Name", "Expiry Date", "Status", "Days Difference", "Document ID", "Vehicle ID"];
+    const headers = ["Vehicle Registration", "Document Type", "Custom Type Name", "Expiry Date", "Status", "Days Until/Past Due", "Document ID", "Vehicle ID"];
     const csvRows = [
       headers.join(','),
       ...sortedDocuments.map(doc => [
@@ -185,7 +203,7 @@ export default function ExpiringDocumentsReportPage() {
         `"${doc.customTypeName || ''}"`,
         `"${doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : 'N/A'}"`,
         `"${doc.status}"`,
-        doc.expiryDate ? doc.daysDifference : 'N/A',
+        doc.expiryDate ? (doc.daysDifference < 0 ? `${Math.abs(doc.daysDifference)} overdue` : `${doc.daysDifference} left`) : 'N/A',
         `"${doc.id}"`,
         `"${doc.vehicleId}"`,
       ].join(','))
@@ -201,13 +219,14 @@ export default function ExpiringDocumentsReportPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      await recordCsvExportAudit('ExpiringDocuments', 'CSV', { statusFilter, docTypeFilter, searchTerm, dateRange });
+      toast({ title: "Export Successful", description: "CSV report downloaded."});
+      await recordCsvExportAudit('ExpiringDocuments', 'CSV', { statusFilter, docTypeFilter, searchTerm, dateRange: dateRange ? {from: dateRange.from && format(dateRange.from, 'yyyy-MM-dd'), to: dateRange.to && format(dateRange.to, 'yyyy-MM-dd')} : undefined });
     }
   };
 
   const renderSortIcon = (column: SortableColumn) => {
-    if (sortColumn !== column) return <ArrowUpDown className="ml-2 h-3 w-3 opacity-30" />;
-    return sortDirection === 'asc' ? <ArrowUpDown className="ml-2 h-3 w-3" /> : <ArrowUpDown className="ml-2 h-3 w-3" />;
+    if (sortColumn !== column) return <ArrowUpDown className="ml-1 h-3 w-3 opacity-30 group-hover:opacity-100" />;
+    return sortDirection === 'asc' ? <ChevronUp className="ml-1 h-3 w-3" /> : <ChevronDown className="ml-1 h-3 w-3" />;
   };
 
   return (
@@ -217,7 +236,7 @@ export default function ExpiringDocumentsReportPage() {
           <ClipboardList className="mr-3 h-8 w-8 text-primary" />
           Document Compliance Report
         </h1>
-        <Button onClick={downloadCSV} variant="outline">
+        <Button onClick={downloadCSV} variant="outline" disabled={isLoading || sortedDocuments.length === 0}>
           <Download className="mr-2 h-4 w-4" /> Export CSV
         </Button>
       </div>
@@ -239,49 +258,18 @@ export default function ExpiringDocumentsReportPage() {
             </Select>
             <Popover>
                 <PopoverTrigger asChild>
-                    <Button
-                    id="date"
-                    variant={"outline"}
-                    className={cn(
-                        "justify-start text-left font-normal h-10", // Ensure height matches other inputs
-                        !dateRange && "text-muted-foreground"
-                    )}
-                    >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {dateRange?.from ? (
-                        dateRange.to ? (
-                        <>
-                            {format(dateRange.from, "LLL dd, y")} -{" "}
-                            {format(dateRange.to, "LLL dd, y")}
-                        </>
-                        ) : (
-                        format(dateRange.from, "LLL dd, y")
-                        )
-                    ) : (
-                        <span>Pick expiry date range</span>
-                    )}
+                    <Button id="date" variant={"outline"} className={cn("justify-start text-left font-normal h-10",!dateRange && "text-muted-foreground")}>
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange?.from ? (dateRange.to ? (<>{format(dateRange.from, "LLL dd, y")} - {format(dateRange.to, "LLL dd, y")}</>) : (format(dateRange.from, "LLL dd, y"))) : (<span>Pick expiry date range</span>)}
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                    initialFocus
-                    mode="range"
-                    defaultMonth={dateRange?.from}
-                    selected={dateRange}
-                    onSelect={setDateRange}
-                    numberOfMonths={2}
-                    />
+                    <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={setDateRange} numberOfMonths={2}/>
                 </PopoverContent>
             </Popover>
-            <div className="relative flex-grow lg:col-span-1"> {/* Adjusted for better layout */}
+            <div className="relative flex-grow lg:col-span-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search Reg No, Doc Type..."
-                className="pl-8 w-full"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+              <Input type="search" placeholder="Search Reg No, Doc Type..." className="pl-8 w-full" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}/>
             </div>
           </div>
            <div className="pt-2">
@@ -292,10 +280,7 @@ export default function ExpiringDocumentsReportPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex justify-center items-center h-64">
-              <Car className="w-12 h-12 animate-pulse text-primary" />
-              <p className="ml-4 text-lg text-muted-foreground">Loading documents...</p>
-            </div>
+            <div className="flex justify-center items-center h-64"><Loader2 className="w-12 h-12 animate-spin text-primary" /><p className="ml-4 text-lg text-muted-foreground">Loading documents...</p></div>
           ) : sortedDocuments.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <ClipboardList className="mx-auto h-16 w-16 mb-4" />
@@ -303,23 +288,24 @@ export default function ExpiringDocumentsReportPage() {
               <p>Try adjusting your search or filter criteria.</p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead onClick={() => handleSort('vehicleRegistration')} className="cursor-pointer hover:bg-muted/50">
-                    Vehicle Reg. {renderSortIcon('vehicleRegistration')}
+                  <TableHead onClick={() => handleSort('vehicleRegistration')} className="cursor-pointer hover:bg-muted/50 group">
+                    <div className="flex items-center">Vehicle Reg. {renderSortIcon('vehicleRegistration')}</div>
                   </TableHead>
-                  <TableHead onClick={() => handleSort('documentType')} className="cursor-pointer hover:bg-muted/50">
-                    Doc Type {renderSortIcon('documentType')}
+                  <TableHead onClick={() => handleSort('documentType')} className="cursor-pointer hover:bg-muted/50 group">
+                     <div className="flex items-center">Doc Type {renderSortIcon('documentType')}</div>
                   </TableHead>
-                  <TableHead onClick={() => handleSort('expiryDate')} className="cursor-pointer hover:bg-muted/50">
-                    Expiry Date {renderSortIcon('expiryDate')}
+                  <TableHead onClick={() => handleSort('expiryDate')} className="cursor-pointer hover:bg-muted/50 group">
+                     <div className="flex items-center">Expiry Date {renderSortIcon('expiryDate')}</div>
                   </TableHead>
-                  <TableHead onClick={() => handleSort('status')} className="cursor-pointer hover:bg-muted/50">
-                    Status {renderSortIcon('status')}
+                  <TableHead onClick={() => handleSort('status')} className="cursor-pointer hover:bg-muted/50 group">
+                    <div className="flex items-center">Status {renderSortIcon('status')}</div>
                   </TableHead>
-                  <TableHead onClick={() => handleSort('daysDifference')} className="text-right cursor-pointer hover:bg-muted/50">
-                    Days Until/Past {renderSortIcon('daysDifference')}
+                  <TableHead onClick={() => handleSort('daysDifference')} className="text-right cursor-pointer hover:bg-muted/50 group">
+                    <div className="flex items-center justify-end">Days Rem./Past {renderSortIcon('daysDifference')}</div>
                   </TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -352,7 +338,7 @@ export default function ExpiringDocumentsReportPage() {
                       </TableCell>
                       <TableCell className={cn("text-right", {
                         'text-red-600 font-semibold': doc.daysDifference < 0 && doc.expiryDate,
-                        'text-yellow-600 font-semibold': doc.expiryDate && doc.daysDifference >= 0 && doc.daysDifference < 30,
+                        'text-yellow-600 font-semibold': doc.expiryDate && doc.daysDifference >= 0 && doc.daysDifference <= EXPIRY_WARNING_DAYS,
                       })}>
                         {doc.expiryDate ? (doc.daysDifference < 0 ? `${Math.abs(doc.daysDifference)} days overdue` : `${doc.daysDifference} days left`) : '-'}
                       </TableCell>
@@ -366,6 +352,7 @@ export default function ExpiringDocumentsReportPage() {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

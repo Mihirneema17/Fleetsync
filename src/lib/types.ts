@@ -48,14 +48,31 @@ export interface User {
   name: string;
   email: string;
   avatarUrl?: string;
-  role: UserRole; // Added role
+  role: UserRole; 
 }
 
+export interface VehicleComplianceStatusBreakdown {
+  compliant: number;
+  expiringSoon: number;
+  overdue: number;
+  missingInfo: number;
+  total: number;
+}
 export interface SummaryStats {
   totalVehicles: number;
-  compliantVehicles: number;
-  expiringSoonDocuments: number; // Overall count
-  overdueDocuments: number; // Overall count
+  compliantVehicles: number; // Vehicles where all docs are compliant
+  expiringSoonDocuments: number; // Overall count of docs expiring soon
+  overdueDocuments: number; // Overall count of overdue docs
+  // Document-specific counts (optional, can be derived or explicitly added)
+  expiringInsurance?: number;
+  overdueInsurance?: number;
+  expiringFitness?: number;
+  overdueFitness?: number;
+  expiringPUC?: number;
+  overduePUC?: number;
+  expiringAITP?: number;
+  overdueAITP?: number;
+  vehicleComplianceBreakdown: VehicleComplianceStatusBreakdown; // For pie chart
 }
 
 
@@ -63,18 +80,19 @@ export type AuditLogAction =
   | 'CREATE_VEHICLE' | 'UPDATE_VEHICLE' | 'DELETE_VEHICLE'
   | 'UPLOAD_DOCUMENT' | 'UPDATE_DOCUMENT' | 'DELETE_DOCUMENT'
   | 'MARK_ALERT_READ'
-  | 'USER_LOGIN' | 'USER_LOGOUT' // Example future actions
-  | 'VIEW_REPORT' | 'EXPORT_REPORT';
+  | 'USER_LOGIN' | 'USER_LOGOUT' 
+  | 'VIEW_REPORT' | 'EXPORT_REPORT'
+  | 'SYSTEM_START';
 
 export interface AuditLogEntry {
   id: string;
   timestamp: string; // ISO datetime string
-  userId: string; // Or system if no user context
+  userId: string; 
   action: AuditLogAction;
   entityType: 'VEHICLE' | 'DOCUMENT' | 'ALERT' | 'USER' | 'SYSTEM' | 'REPORT';
-  entityId?: string; // Optional if not applicable (e.g. system event)
-  entityRegistration?: string; // For quick ref like vehicle reg number
-  details: Record<string, any>; // Flexible JSON blob for action-specific details
+  entityId?: string; 
+  entityRegistration?: string; 
+  details: Record<string, any>; 
 }
 
 export interface ReportableDocument extends VehicleDocument {
