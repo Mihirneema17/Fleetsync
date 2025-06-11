@@ -1,12 +1,10 @@
 
-"use client";
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, ActivitySquare, Leaf, Paperclip, PieChart as PieChartIcon, AlertCircle, Loader2, UploadCloud } from 'lucide-react';
+import { Car, FileWarning, ShieldAlert, CheckCircle, ActivitySquare, Leaf, Paperclip, PieChart as PieChartLucideIcon, AlertCircle as AlertCircleLucide } from 'lucide-react'; // Renamed PieChart to PieChartLucideIcon
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { getSummaryStats, getVehicles, getAlerts, getDocumentComplianceStatus, getOverallVehicleCompliance, getLatestDocumentForType } from '@/lib/data';
-import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument, VehicleComplianceStatusBreakdown } from '@/lib/types';
+import { getSummaryStats, getVehicles, getAlerts, getLatestDocumentForType, getDocumentComplianceStatus, getOverallVehicleCompliance } from '@/lib/data';
+import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument } from '@/lib/types';
 import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,18 +12,10 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDistanceToNow, parseISO, differenceInDays, format } from 'date-fns';
-import { EXPIRY_WARNING_DAYS, DATE_FORMAT, DOCUMENT_TYPES } from '@/lib/constants';
+import { DATE_FORMAT, DOCUMENT_TYPES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  ChartLegend,
-  ChartLegendContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
-import { PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
-import { SmartDocumentIngestionModal } from '@/components/document/smart-document-ingestion-modal';
+import { SmartIngestTrigger } from '@/components/dashboard/smart-ingest-trigger';
+import { CompliancePieChart } from '@/components/dashboard/compliance-pie-chart'; // New import
 
 
 interface DocumentAlertItem {
@@ -41,7 +31,7 @@ interface DocumentAlertItem {
 }
 
 const documentTypeIcons: Record<DocumentType | 'Generic', React.ElementType> = {
-  Insurance: ShieldCheck,
+  Insurance: CheckCircle, // Changed from ShieldCheck for consistency or preference
   Fitness: ActivitySquare,
   PUC: Leaf,
   AITP: Paperclip,
@@ -49,200 +39,115 @@ const documentTypeIcons: Record<DocumentType | 'Generic', React.ElementType> = {
   Generic: FileWarning,
 };
 
-const chartConfig: ChartConfig = {
-  compliant: { label: "Compliant", color: "hsl(var(--chart-2))" },
-  expiringSoon: { label: "Expiring Soon", color: "hsl(var(--chart-4))" },
-  overdue: { label: "Overdue", color: "hsl(var(--chart-1))" },
-  missingInfo: { label: "Missing Info", color: "hsl(var(--chart-5))" },
+
+// Helper function, remains synchronous
+const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docTypeToFilter: DocumentType): DocumentAlertItem[] => {
+  const items: DocumentAlertItem[] = [];
+  const now = new Date();
+
+  vehicles.forEach(vehicle => {
+    const latestDoc = getLatestDocumentForType(vehicle, docTypeToFilter);
+
+    if (latestDoc && latestDoc.expiryDate) {
+      const expiry = parseISO(latestDoc.expiryDate);
+      const daysDifference = differenceInDays(expiry, now);
+      const complianceStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
+
+      if (complianceStatus === 'Overdue' || complianceStatus === 'ExpiringSoon') {
+        let statusText = '';
+        let statusVariant: DocumentAlertItem['statusVariant'] = 'default';
+
+        if (complianceStatus === 'Overdue') {
+          statusText = `Overdue by ${Math.abs(daysDifference)} day(s)`;
+          statusVariant = 'destructive';
+        } else if (complianceStatus === 'ExpiringSoon') {
+          statusText = `Expires in ${daysDifference} day(s)`;
+          statusVariant = 'secondary';
+        }
+        
+        items.push({
+          vehicleId: vehicle.id,
+          vehicleRegistration: vehicle.registrationNumber,
+          documentId: latestDoc.id,
+          documentType: latestDoc.type,
+          customTypeName: latestDoc.customTypeName,
+          expiryDate: latestDoc.expiryDate,
+          statusText,
+          statusVariant,
+          daysDiff: daysDifference,
+        });
+      }
+    }
+  });
+  return items.sort((a, b) => a.daysDiff - b.daysDiff);
 };
 
-export default function DashboardPage() {
-  const [stats, setStats] = useState<SummaryStats | null>(null);
-  const [recentVehicles, setRecentVehicles] = useState<Vehicle[]>([]);
-  const [recentAlerts, setRecentAlerts] = useState<AlertType[]>([]);
-  const [allVehicles, setAllVehicles] = useState<Vehicle[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSmartIngestModalOpen, setIsSmartIngestModalOpen] = useState(false);
+export default async function DashboardPage() {
+  const [summary, vehiclesData, alertsData] = await Promise.all([
+    getSummaryStats(),
+    getVehicles(), 
+    getAlerts(true) 
+  ]);
 
-  useEffect(() => {
-    async function fetchData() {
-      setIsLoading(true);
-      const [summary, vehiclesData, alertsData] = await Promise.all([
-        getSummaryStats(),
-        getVehicles(),
-        getAlerts(true) // Fetch only unread alerts
-      ]);
-      setStats(summary);
-      setAllVehicles(vehiclesData);
-      setRecentVehicles(vehiclesData.slice(0, 4));
-      setRecentAlerts(alertsData.slice(0,5)); // Show top 5 unread alerts
-      setIsLoading(false);
-    }
-    fetchData();
-  }, []);
+  const recentVehicles = vehiclesData.slice(0, 4);
+  const recentAlerts = alertsData.slice(0, 5);
 
-  const processVehiclesForDocumentAlerts = useCallback((vehicles: Vehicle[], docTypeToFilter: DocumentType): DocumentAlertItem[] => {
-    const items: DocumentAlertItem[] = [];
-    const now = new Date();
-
-    vehicles.forEach(vehicle => {
-      const latestDoc = getLatestDocumentForType(vehicle, docTypeToFilter);
-
-      if (latestDoc && latestDoc.expiryDate) {
-        const expiry = parseISO(latestDoc.expiryDate);
-        const daysDifference = differenceInDays(expiry, now);
-        const complianceStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
-
-        if (complianceStatus === 'Overdue' || complianceStatus === 'ExpiringSoon') {
-          let statusText = '';
-          let statusVariant: DocumentAlertItem['statusVariant'] = 'default';
-
-          if (complianceStatus === 'Overdue') {
-            statusText = `Overdue by ${Math.abs(daysDifference)} day(s)`;
-            statusVariant = 'destructive';
-          } else if (complianceStatus === 'ExpiringSoon') {
-            statusText = `Expires in ${daysDifference} day(s)`;
-            statusVariant = 'secondary';
-          }
-          
-          items.push({
-            vehicleId: vehicle.id,
-            vehicleRegistration: vehicle.registrationNumber,
-            documentId: latestDoc.id,
-            documentType: latestDoc.type,
-            customTypeName: latestDoc.customTypeName,
-            expiryDate: latestDoc.expiryDate,
-            statusText,
-            statusVariant,
-            daysDiff: daysDifference,
-          });
-        }
-      }
-    });
-    return items.sort((a, b) => a.daysDiff - b.daysDiff);
-  }, []);
-  
-  const documentSections = useMemo(() => {
-    return DOCUMENT_TYPES.filter(type => type !== 'Other').map(docType => ({
-        title: `${docType} Status`,
-        docType: docType,
-        items: processVehiclesForDocumentAlerts(allVehicles, docType),
-        icon: documentTypeIcons[docType] || documentTypeIcons.Generic,
+  const documentSections = DOCUMENT_TYPES
+    .filter(type => type !== 'Other')
+    .map(docType => ({
+      title: `${docType} Status`,
+      docType: docType,
+      items: processVehiclesForDocumentAlerts(vehiclesData, docType),
+      icon: documentTypeIcons[docType] || documentTypeIcons.Generic,
     }));
-  }, [allVehicles, processVehiclesForDocumentAlerts]);
 
 
-  const chartData = stats?.vehicleComplianceBreakdown ? [
-    { name: "Compliant", value: stats.vehicleComplianceBreakdown.compliant, fill: "var(--color-compliant)" },
-    { name: "Expiring Soon", value: stats.vehicleComplianceBreakdown.expiringSoon, fill: "var(--color-expiringSoon)" },
-    { name: "Overdue", value: stats.vehicleComplianceBreakdown.overdue, fill: "var(--color-overdue)" },
-    { name: "Missing Info", value: stats.vehicleComplianceBreakdown.missingInfo, fill: "var(--color-missingInfo)" },
-  ].filter(item => item.value > 0) : [];
-
-
-  if (isLoading || !stats) {
+  if (!summary) {
     return (
-      <div className="flex justify-center items-center h-screen">
-        <Loader2 className="h-16 w-16 animate-spin text-primary" />
-      </div>
+        <div className="flex flex-col items-center justify-center h-full p-8">
+            <AlertCircleLucide className="w-16 h-16 text-muted-foreground mb-4" />
+            <h2 className="text-2xl font-semibold mb-2">Could not load dashboard data.</h2>
+            <p className="text-muted-foreground">There was an issue fetching the summary statistics. Please try again later.</p>
+        </div>
     );
   }
-
-  // const handleSmartIngestSubmit = async (file: File) => {
-  //   // Logic for Step D and F will go here
-  //   console.log("Processing smart ingest for file:", file.name);
-  //   // setIsSmartIngestModalOpen(false); // Close modal after processing
-  // };
-
 
   return (
     <div className="flex flex-col gap-8">
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <SummaryCard
           title="Total Vehicles"
-          value={stats.totalVehicles}
+          value={summary.totalVehicles}
           icon={Car}
           iconClassName="text-primary"
         />
         <SummaryCard
           title="Compliant Vehicles"
-          value={`${stats.vehicleComplianceBreakdown.compliant} / ${stats.totalVehicles}`}
+          value={`${summary.vehicleComplianceBreakdown.compliant} / ${summary.totalVehicles}`}
           icon={CheckCircle}
-          description={`${stats.totalVehicles > 0 ? ((stats.vehicleComplianceBreakdown.compliant/stats.totalVehicles)*100).toFixed(0) : 0}% fleet compliance`}
+          description={`${summary.totalVehicles > 0 ? ((summary.vehicleComplianceBreakdown.compliant/summary.totalVehicles)*100).toFixed(0) : 0}% fleet compliance`}
           iconClassName="text-green-500"
         />
         <SummaryCard
           title="Expiring Soon (Active Docs)"
-          value={stats.expiringSoonDocuments}
+          value={summary.expiringSoonDocuments}
           icon={FileWarning}
           description="Total active documents needing attention"
           iconClassName="text-yellow-500"
         />
         <SummaryCard
           title="Overdue (Active Docs)"
-          value={stats.overdueDocuments}
+          value={summary.overdueDocuments}
           icon={ShieldAlert}
           description="Total active documents requiring immediate action"
           iconClassName="text-red-500"
         />
       </div>
 
-      <div className="flex justify-start py-2"> {/* Reduced py for tighter spacing */}
-        <Button onClick={() => setIsSmartIngestModalOpen(true)} size="lg">
-          <UploadCloud className="mr-2 h-5 w-5" /> Smart Document Upload
-        </Button>
-      </div>
-
-      {isSmartIngestModalOpen && (
-        <SmartDocumentIngestionModal
-          isOpen={isSmartIngestModalOpen}
-          onClose={() => setIsSmartIngestModalOpen(false)}
-          // onProcess={handleSmartIngestSubmit} // This function will be defined later
-        />
-      )}
-
+      <SmartIngestTrigger />
 
       <div className="grid gap-6 md:grid-cols-3">
-        <Card className="md:col-span-1 shadow-md">
-            <CardHeader>
-                <CardTitle className="font-headline text-lg flex items-center">
-                <PieChartIcon className="mr-2 h-5 w-5 text-primary" />
-                Vehicle Compliance Overview
-                </CardTitle>
-                <CardDescription>
-                    At-a-glance status of your fleet.
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                {chartData.length > 0 && stats.vehicleComplianceBreakdown.total > 0 ? (
-                    <ChartContainer config={chartConfig} className="mx-auto aspect-square max-h-[300px]">
-                        <PieChart>
-                        <RechartsTooltip
-                            cursor={false}
-                            content={<ChartTooltipContent hideLabel />}
-                        />
-                        <Pie
-                            data={chartData}
-                            dataKey="value"
-                            nameKey="name"
-                            innerRadius={50}
-                            strokeWidth={2}
-                        >
-                            {chartData.map((entry) => (
-                            <Cell key={entry.name} fill={entry.fill} />
-                            ))}
-                        </Pie>
-                        <ChartLegend content={<ChartLegendContent nameKey="name" />} />
-                        </PieChart>
-                    </ChartContainer>
-                ) : (
-                    <div className="flex flex-col items-center justify-center h-[250px] text-muted-foreground">
-                        <AlertCircle className="w-12 h-12 mb-2" />
-                        <p>No vehicle data available for chart.</p>
-                    </div>
-                )}
-            </CardContent>
-        </Card>
+        <CompliancePieChart breakdown={summary?.vehicleComplianceBreakdown} />
 
         <div className="md:col-span-2">
             <div className="flex items-center justify-between mb-4">
@@ -269,7 +174,6 @@ export default function DashboardPage() {
             )}
         </div>
       </div>
-
 
       <div>
         <h2 className="text-xl font-semibold font-headline mb-4">Detailed Document Status - Action Required</h2>
@@ -328,7 +232,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2">
             {/* Placeholder for future content or keep vehicle quick view if it doesn't fit above */}
@@ -366,8 +269,6 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
-
     </div>
   );
 }
-
