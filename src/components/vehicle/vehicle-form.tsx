@@ -16,8 +16,8 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import type { Vehicle, VehicleType } from "@/lib/types"; // VehicleType is now string
-import { VEHICLE_TYPES } from "@/lib/constants"; // This is now a list of suggestions
+import type { Vehicle } from "@/lib/types"; 
+import { VEHICLE_TYPES } from "@/lib/constants"; 
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
@@ -25,7 +25,7 @@ import React from "react";
 
 const vehicleFormSchema = z.object({
   registrationNumber: z.string().min(3, "Registration number must be at least 3 characters.").max(20),
-  type: z.string().min(2, "Vehicle type must be at least 2 characters.").max(50), // Changed from enum to string
+  type: z.string().min(2, "Vehicle type must be at least 2 characters.").max(50),
   make: z.string().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().min(1, "Model must be at least 1 character.").max(50),
 });
@@ -34,7 +34,9 @@ type VehicleFormValues = z.infer<typeof vehicleFormSchema>;
 
 interface VehicleFormProps {
   initialData?: Vehicle | null;
-  onSubmit: (data: VehicleFormValues) => Promise<Vehicle | undefined | void>;
+  // The onSubmit prop now expects a function that will handle the server action call
+  // and return a promise that might resolve to the vehicle or an error object.
+  onSubmit: (data: VehicleFormValues) => Promise<Vehicle | { error: string } | undefined | void>;
   isEditing?: boolean;
 }
 
@@ -62,20 +64,32 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
     defaultValues,
   });
 
-  const handleSubmit = async (data: VehicleFormValues) => {
+  const handleFormSubmit = async (data: VehicleFormValues) => {
     setIsSubmitting(true);
     try {
-      await onSubmit(data);
+      const result = await onSubmit(data); // Call the server action passed via props
+
+      if (result && typeof result === 'object' && 'error' in result && result.error) {
+        throw new Error(result.error);
+      }
+      
       toast({
         title: isEditing ? "Vehicle Updated" : "Vehicle Added",
         description: `Vehicle ${data.registrationNumber} has been successfully ${isEditing ? 'updated' : 'added'}.`,
       });
+      
+      // For edits, router.refresh() will be handled by revalidatePath in the server action.
+      // For adds, a revalidatePath can also be called in the addVehicle server action.
+      // Then navigate.
       router.push("/vehicles");
-      router.refresh();
+      router.refresh(); // Explicitly call refresh here to ensure client cache is updated after navigation.
+                       // This is particularly useful if revalidatePath alone isn't sufficient for all client component updates.
+
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : `Failed to ${isEditing ? 'update' : 'add'} vehicle.`;
       toast({
         title: "Error",
-        description: `Failed to ${isEditing ? 'update' : 'add'} vehicle. Please try again.`,
+        description: errorMessage + " Please try again.",
         variant: "destructive",
       });
       console.error("Form submission error:", error);
@@ -94,7 +108,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       </CardHeader>
       <CardContent>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
+          <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
             <FormField
               control={form.control}
               name="registrationNumber"
@@ -116,13 +130,13 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
                 <FormItem>
                   <FormLabel>Vehicle Type</FormLabel>
                   <FormControl>
-                    <Input
+                     <Input
                       placeholder="e.g., Car, Truck, Custom Van"
                       {...field}
                       list="vehicle-type-suggestions"
                     />
                   </FormControl>
-                  <datalist id="vehicle-type-suggestions">
+                   <datalist id="vehicle-type-suggestions">
                     {VEHICLE_TYPES.map((type) => (
                       <option key={type} value={type} />
                     ))}
