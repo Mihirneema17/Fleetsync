@@ -3,6 +3,9 @@ import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry
 import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT, AUDIT_LOG_ACTIONS } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays, isAfter } from 'date-fns';
 
+// Moved generateId to the top
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
 // Global in-memory store for mock data
 declare global {
   // eslint-disable-next-line no-var
@@ -15,15 +18,6 @@ declare global {
   var _mockAuditLogs: AuditLogEntry[];
 }
 
-// Initialize global stores only once
-if (typeof global._initializedData === 'undefined') {
-  global._mockVehicles = [];
-  global._mockAlerts = [];
-  global._mockAuditLogs = [];
-  _performInitialization(); // Call the actual initialization logic
-  global._initializedData = true;
-}
-
 const getVehiclesStore = (): Vehicle[] => global._mockVehicles;
 const getAlertsStore = (): Alert[] => global._mockAlerts;
 const getAuditLogsStore = (): AuditLogEntry[] => global._mockAuditLogs;
@@ -32,9 +26,7 @@ const setVehiclesStore = (vehicles: Vehicle[]) => { global._mockVehicles = vehic
 const setAlertsStore = (alerts: Alert[]) => { global._mockAlerts = alerts; };
 const setAuditLogsStore = (auditLogs: AuditLogEntry[]) => { global._mockAuditLogs = auditLogs; };
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
-
-// Internal audit logging function
+// Internal audit logging function defined after generateId
 const internalLogAuditEvent = (
   action: AuditLogAction,
   entityType: AuditLogEntry['entityType'],
@@ -56,6 +48,7 @@ const internalLogAuditEvent = (
   setAuditLogsStore(auditLogs);
 };
 
+// _performInitialization uses generateId and internalLogAuditEvent
 function _performInitialization() {
   const today = new Date();
   const initialVehiclesData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>[] = [
@@ -122,7 +115,7 @@ function _performInitialization() {
               expiryDate: expiryDateValue ? formatISO(expiryDateValue, { representation: 'date' }) : null,
               documentUrl: mockDocumentUrl,
               documentName: mockDocumentName,
-              status: 'Missing', // Initialize with a default/placeholder status, will be updated
+              status: 'Missing', // Initialize with a default status, will be updated
               uploadedAt: docUploadedAt,
               aiExtractedPolicyNumber: useAiMock && policyNum ? (Math.random() > 0.2 ? policyNum : `AI-${policyNum.substring(3)}`) : null,
               aiPolicyNumberConfidence: useAiMock && policyNum ? Math.random() * 0.3 + 0.7 : null,
@@ -140,11 +133,11 @@ function _performInitialization() {
 
   setVehiclesStore(initializedVehicles);
 
-  // Now, iterate through the fully populated vehicles to set document statuses
+  // Now, iterate through the fully populated vehicles to set document statuses correctly
   const currentVehicles = getVehiclesStore(); // Get a mutable copy
   currentVehicles.forEach(vehicle => {
     vehicle.documents.forEach(doc => {
-      doc.status = getDocumentComplianceStatus(doc.expiryDate);
+      doc.status = getDocumentComplianceStatus(doc.expiryDate); // Calculate status now
     });
   });
   setVehiclesStore(currentVehicles); // Persist the updated statuses
@@ -152,6 +145,15 @@ function _performInitialization() {
   generateAllAlerts(); // Generate alerts AFTER vehicles and their documents are populated and statuses set
   internalLogAuditEvent('SYSTEM_DATA_INITIALIZED', 'SYSTEM', undefined, { message: 'Dummy data initialized' });
 };
+
+// Initialize global stores only once
+if (typeof global._initializedData === 'undefined') {
+  global._mockVehicles = [];
+  global._mockAlerts = [];
+  global._mockAuditLogs = [];
+  _performInitialization(); // Call the actual initialization logic
+  global._initializedData = true;
+}
 
 
 export const getDocumentComplianceStatus = (expiryDate: string | null): VehicleDocument['status'] => {
@@ -271,15 +273,15 @@ export async function addOrUpdateDocument(
     customTypeName?: string;
     policyNumber?: string | null;
     startDate?: string | null;
-    expiryDate: string | null; // Should be non-null from form validation
+    expiryDate: string | null; 
     documentName?: string;
     documentUrl?: string;
     aiExtractedPolicyNumber?: string | null;
     aiPolicyNumberConfidence?: number | null;
     aiExtractedStartDate?: string | null;
     aiStartDateConfidence?: number | null;
-    aiExtractedDate?: string | null; // Corresponds to AI's expiry date extraction
-    aiConfidence?: number | null;    // Corresponds to AI's expiry date confidence
+    aiExtractedDate?: string | null; 
+    aiConfidence?: number | null;    
   }
 ): Promise<Vehicle | undefined> {
   const currentVehicles = getVehiclesStore();
@@ -288,7 +290,7 @@ export async function addOrUpdateDocument(
 
   const vehicle = currentVehicles[vehicleIndex];
   const newDocId = generateId();
-  // Ensure expiryDate is not null before calculating status; form validation should ensure this
+  
   const status = getDocumentComplianceStatus(docData.expiryDate); 
   const uploadedAt = formatISO(new Date());
 
@@ -299,23 +301,23 @@ export async function addOrUpdateDocument(
     customTypeName: docData.customTypeName,
     policyNumber: docData.policyNumber,
     startDate: docData.startDate,
-    expiryDate: docData.expiryDate, // This is the user-confirmed/corrected expiry date
+    expiryDate: docData.expiryDate, 
     documentUrl: docData.documentUrl,
     documentName: docData.documentName,
     status,
     uploadedAt,
-    // Store all AI details as passed
+    
     aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber,
     aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence,
     aiExtractedStartDate: docData.aiExtractedStartDate,
     aiStartDateConfidence: docData.aiStartDateConfidence,
-    aiExtractedDate: docData.aiExtractedDate, // This is the AI's original expiry suggestion
-    aiConfidence: docData.aiConfidence,       // This is the AI's original expiry confidence
+    aiExtractedDate: docData.aiExtractedDate, 
+    aiConfidence: docData.aiConfidence,       
   };
 
   vehicle.documents.push(newDocument);
 
-  // Remove placeholder 'Missing' document if one exists for this type
+  
   const missingPlaceholderIndex = vehicle.documents.findIndex(d =>
     d.type === newDocument.type &&
     (d.type !== 'Other' || d.customTypeName === newDocument.customTypeName) &&
@@ -334,15 +336,15 @@ export async function addOrUpdateDocument(
     customTypeName: newDocument.customTypeName,
     policyNumber: newDocument.policyNumber,
     startDate: newDocument.startDate,
-    expiryDate: newDocument.expiryDate, // Log the final saved expiry date
+    expiryDate: newDocument.expiryDate, 
     documentName: newDocument.documentName,
-    // Log AI details
+    
     aiExtractedPolicyNumber: newDocument.aiExtractedPolicyNumber,
     aiPolicyNumberConfidence: newDocument.aiPolicyNumberConfidence,
     aiExtractedStartDate: newDocument.aiExtractedStartDate,
     aiStartDateConfidence: newDocument.aiStartDateConfidence,
-    aiExtractedExpiryDate: newDocument.aiExtractedDate, // Log AI's original suggestion for expiry
-    aiExpiryDateConfidence: newDocument.aiConfidence, // Log AI's original confidence for expiry
+    aiExtractedExpiryDate: newDocument.aiExtractedDate, 
+    aiExpiryDateConfidence: newDocument.aiConfidence, 
   }, vehicle.registrationNumber);
 
   generateAlertsForVehicle(vehicle);
@@ -353,7 +355,7 @@ export const getLatestDocumentForType = (vehicle: Vehicle, docType: DocumentType
   const docsOfType = vehicle.documents.filter(d =>
       d.type === docType &&
       (docType !== 'Other' || d.customTypeName === customTypeName) &&
-      d.expiryDate // Only consider documents that have an expiry date as "latest active"
+      d.expiryDate 
   );
   if (docsOfType.length === 0) return undefined;
 
