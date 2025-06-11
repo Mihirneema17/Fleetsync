@@ -12,13 +12,15 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Loader2, AlertCircle } from 'lucide-react';
-import type { SmartIngestOutput } from '@/ai/flows/smart-ingest-flow'; // Will be used in next steps
+import { Loader2, AlertCircle, UploadCloud } from 'lucide-react';
+import { smartIngestDocument, type SmartIngestOutput, type SmartIngestInput } from '@/ai/flows/smart-ingest-flow';
+import { useToast } from '@/hooks/use-toast';
 
 interface SmartDocumentIngestionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  // onProcess: (file: File) => Promise<void>; // Will be implemented in next step
+  // onProcess is for Step F - actual form submission and saving
+  // onProcess: (file: File, aiData: SmartIngestOutput) => Promise<void>; 
 }
 
 export function SmartDocumentIngestionModal({
@@ -28,65 +30,108 @@ export function SmartDocumentIngestionModal({
 }: SmartDocumentIngestionModalProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
-  const [aiResults, setAiResults] = useState<SmartIngestOutput | null>(null); // To be populated by AI
-  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [aiResults, setAiResults] = useState<SmartIngestOutput | null>(null);
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  const { toast } = useToast();
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    setAiResults(null); // Reset AI results when a new file is selected
+    setProcessingError(null); // Reset errors
+
     if (file) {
       if (file.size > 5 * 1024 * 1024) { // 5MB limit
-        setPreviewError("File is too large. Maximum size is 5MB.");
+        setProcessingError("File is too large. Maximum size is 5MB.");
         setSelectedFile(null);
         return;
       }
-      // Check file type (optional, but good practice)
       const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
       if (!allowedTypes.includes(file.type)) {
-        setPreviewError("Invalid file type. Please upload a PDF, JPG, PNG, or WEBP file.");
+        setProcessingError("Invalid file type. Please upload a PDF, JPG, PNG, or WEBP file.");
         setSelectedFile(null);
         return;
       }
       setSelectedFile(file);
-      setPreviewError(null);
-      setAiResults(null); // Reset AI results when a new file is selected
+      setProcessingError(null);
+      
+      // Automatically trigger AI processing when file is selected
+      await processWithAI(file);
+
     } else {
       setSelectedFile(null);
-      setPreviewError(null);
+      setProcessingError(null);
     }
   };
 
-  const handleProcessDocument = async () => {
-    if (!selectedFile) {
-      setPreviewError("Please select a file to process.");
-      return;
+  const processWithAI = async (file: File) => {
+    if (!file) {
+        setProcessingError("No file selected for AI processing.");
+        return;
     }
-    // AI Processing logic will be added in Step D
     setIsProcessingAI(true);
-    // Simulate AI processing for now
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setAiResults({ // Dummy results for placeholder
-        vehicleRegistrationNumber: "MH12AB1234",
-        vehicleRegistrationNumberConfidence: 0.95,
-        documentTypeSuggestion: "Insurance",
-        documentTypeConfidence: 0.9,
-        customTypeNameSuggestion: null,
-        policyNumber: "POL123XYZ",
-        policyNumberConfidence: 0.88,
-        startDate: "2023-01-01",
-        startDateConfidence: 0.85,
-        expiryDate: "2024-01-01",
-        expiryDateConfidence: 0.92,
-    });
-    setIsProcessingAI(false);
-    // Call actual onProcess function in Step D
-    // await onProcess(selectedFile);
+    setProcessingError(null);
+    setAiResults(null);
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const dataUri = reader.result as string;
+        try {
+          const result = await smartIngestDocument({ documentDataUri: dataUri });
+          setAiResults(result);
+          toast({
+            title: "AI Processing Complete",
+            description: "Review the extracted details below.",
+          });
+        } catch (e) {
+          console.error("Smart Ingest AI error:", e);
+          setProcessingError("AI processing failed. Please try again or enter details manually.");
+          toast({
+            title: "AI Error",
+            description: "Could not extract details from the document.",
+            variant: "destructive",
+          });
+        } finally {
+          setIsProcessingAI(false);
+        }
+      };
+      reader.onerror = () => {
+        setProcessingError("Failed to read file for AI processing.");
+        setIsProcessingAI(false);
+        toast({ title: "File Read Error", description: "Could not read the file.", variant = "destructive" });
+      };
+      reader.readAsDataURL(file);
+    } catch (e) {
+      console.error("File processing error before AI:", e);
+      setProcessingError("Error preparing file for AI. Please try again.");
+      setIsProcessingAI(false);
+      toast({ title: "File Error", description: "Could not prepare file for AI.", variant = "destructive" });
+    }
+  };
+
+
+  const handleModalSubmitOrNext = async () => {
+    if (aiResults) {
+      // Logic for Step E/F: Pass aiResults to next stage (e.g. open a form prefilled with aiResults)
+      // For now, we'll just log it and potentially close the modal or reset for another upload.
+      console.log("AI Results to be used for form prefill:", aiResults);
+      toast({ title: "Next Step: Review", description: "Review and save functionality will be implemented next."});
+      // In a real flow, you might pass `aiResults` to another component/modal or update parent state.
+      // For now, let's keep the modal open to see the results, or the user can cancel/close.
+    } else if (selectedFile && !isProcessingAI) {
+      // This case should ideally not be hit if AI processes automatically on file selection.
+      // But if we had a separate "Process" button:
+      await processWithAI(selectedFile);
+    } else if (!selectedFile) {
+        setProcessingError("Please select a file first.");
+    }
   };
 
   const resetAndClose = () => {
     setSelectedFile(null);
     setIsProcessingAI(false);
     setAiResults(null);
-    setPreviewError(null);
+    setProcessingError(null);
     onClose();
   };
 
@@ -108,12 +153,12 @@ export function SmartDocumentIngestionModal({
             onChange={handleFileChange}
             disabled={isProcessingAI}
           />
-          {previewError && (
+          {processingError && (
             <div className="text-sm text-destructive flex items-center">
-              <AlertCircle className="mr-2 h-4 w-4" /> {previewError}
+              <AlertCircle className="mr-2 h-4 w-4" /> {processingError}
             </div>
           )}
-          {selectedFile && !previewError && (
+          {selectedFile && !processingError && (
             <div className="text-sm text-muted-foreground">
               Selected: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB)
             </div>
@@ -126,13 +171,12 @@ export function SmartDocumentIngestionModal({
             </div>
           )}
 
-          {/* Placeholder for AI Results and Correction Form - To be built in Step E */}
           {aiResults && !isProcessingAI && (
-            <div className="p-4 border rounded-md bg-muted/50">
-              <h3 className="font-semibold mb-2 text-sm">AI Extracted Details (Placeholder):</h3>
+            <div className="p-4 border rounded-md bg-muted/50 max-h-60 overflow-y-auto">
+              <h3 className="font-semibold mb-2 text-sm">AI Extracted Details (Raw):</h3>
               <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(aiResults, null, 2)}</pre>
               <p className="text-xs text-muted-foreground mt-2">
-                You will be able to review and correct these details in the next step.
+                Next step: Review and correct these details in a form.
               </p>
             </div>
           )}
@@ -143,14 +187,15 @@ export function SmartDocumentIngestionModal({
           </Button>
           <Button 
             type="button" 
-            onClick={handleProcessDocument} 
-            disabled={!selectedFile || isProcessingAI || !!previewError}
+            onClick={handleModalSubmitOrNext} 
+            disabled={!selectedFile || isProcessingAI || !!processingError && !aiResults}
           >
-            {isProcessingAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            {aiResults ? "Next (Review &amp; Save)" : "Upload &amp; Process"}
+            {isProcessingAI ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : (aiResults ? <UploadCloud className="mr-2 h-4 w-4" /> : null) }
+            {aiResults ? "Next (Review & Save)" : "Upload & Process"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+ 
