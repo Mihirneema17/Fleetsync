@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
 
 export default function VehicleDetailPage({ params }: { params: { id: string } }) {
+  const { id: vehicleId } = params; // Destructure id here
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,7 +29,7 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
   useEffect(() => {
     async function fetchVehicle() {
       setIsLoading(true);
-      const fetchedVehicle = await getVehicleById(params.id);
+      const fetchedVehicle = await getVehicleById(vehicleId); // Use destructured id
       if (!fetchedVehicle) {
         notFound();
       } else {
@@ -37,7 +38,7 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
       setIsLoading(false);
     }
     fetchVehicle();
-  }, [params.id]);
+  }, [vehicleId]); // Use destructured id in dependency array
 
   const getStatusConfig = (status: VehicleDocument['status']) => {
     switch (status) {
