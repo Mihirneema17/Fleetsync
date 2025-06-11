@@ -1,7 +1,7 @@
 
 "use client";
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, ActivitySquare, Leaf, Paperclip, PieChart as PieChartIcon, AlertCircle, Loader2 } from 'lucide-react';
+import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, ActivitySquare, Leaf, Paperclip, PieChart as PieChartIcon, AlertCircle, Loader2, UploadCloud } from 'lucide-react';
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
@@ -61,6 +61,7 @@ export default function DashboardPage() {
   const [recentAlerts, setRecentAlerts] = useState<AlertType[]>([]);
   const [allVehicles, setAllVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSmartIngestModalOpen, setIsSmartIngestModalOpen] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
@@ -178,6 +179,22 @@ export default function DashboardPage() {
           iconClassName="text-red-500"
         />
       </div>
+
+      <div className="flex justify-start py-2"> {/* Reduced py for tighter spacing */}
+        <Button onClick={() => setIsSmartIngestModalOpen(true)} size="lg">
+          <UploadCloud className="mr-2 h-5 w-5" /> Smart Document Upload
+        </Button>
+      </div>
+
+      {/* Placeholder for the SmartDocumentIngestionModal - will be added in a future step */}
+      {/* {isSmartIngestModalOpen && (
+        <SmartDocumentIngestionModal
+          isOpen={isSmartIngestModalOpen}
+          onClose={() => setIsSmartIngestModalOpen(false)}
+          // onSubmit={handleSmartIngestSubmit} // This function will be defined later
+        />
+      )} */}
+
 
       <div className="grid gap-6 md:grid-cols-3">
         <Card className="md:col-span-1 shadow-md">
