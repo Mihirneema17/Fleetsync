@@ -2,7 +2,7 @@
 "use client"; 
 
 import Link from 'next/link';
-import { PlusCircle, Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { PlusCircle, Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -21,8 +21,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { getVehicles, getDocumentComplianceStatus } from '@/lib/data';
-import type { Vehicle } from '@/lib/types';
+import { getVehicles, getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/data';
+import type { Vehicle, DocumentType, VehicleDocument } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -45,22 +45,35 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useToast } from "@/hooks/use-toast";
 import { handleDeleteVehicleServerAction } from './actions';
-
+import { format, parseISO, differenceInDays } from 'date-fns';
+import { DATE_FORMAT } from '@/lib/constants';
 
 const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo', variant: 'default' | 'secondary' | 'destructive' | 'outline', icon: React.ElementType } => {
   let hasOverdue = false;
   let hasExpiringSoon = false;
   let hasMissing = false;
 
-  if (!vehicle.documents || vehicle.documents.length === 0) {
-    return { status: 'MissingInfo', variant: 'outline', icon: AlertTriangle };
+  const relevantDocTypes: DocumentType[] = ['Insurance', 'Fitness', 'PUC', 'AITP'];
+  const activeDocs = relevantDocTypes.map(docType => getLatestDocumentForType(vehicle, docType)).filter(doc => doc && doc.expiryDate);
+
+  if (activeDocs.length === 0 && vehicle.documents.some(d => d.status === 'Missing')) {
+      hasMissing = true;
+  } else if (activeDocs.length < relevantDocTypes.filter(dt => {
+    // AITP might not be relevant for all vehicle types, handle this logic if needed, for now assume all are relevant if a document of that type exists
+    return vehicle.documents.some(d => d.type === dt);
+  }).length ) {
+    hasMissing = true;
   }
 
-  vehicle.documents.forEach(doc => {
-    const status = getDocumentComplianceStatus(doc.expiryDate);
-    if (status === 'Overdue') hasOverdue = true;
-    else if (status === 'ExpiringSoon') hasExpiringSoon = true;
-    else if (status === 'Missing') hasMissing = true;
+
+  activeDocs.forEach(doc => {
+    if(doc && doc.expiryDate) {
+      const status = getDocumentComplianceStatus(doc.expiryDate);
+      if (status === 'Overdue') hasOverdue = true;
+      else if (status === 'ExpiringSoon') hasExpiringSoon = true;
+    } else {
+      hasMissing = true;
+    }
   });
 
   if (hasOverdue) return { status: 'Overdue', variant: 'destructive', icon: AlertTriangle };
@@ -68,6 +81,22 @@ const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' |
   if (hasMissing) return { status: 'MissingInfo', variant: 'outline', icon: AlertTriangle };
   return { status: 'Compliant', variant: 'default', icon: CheckCircle2 };
 };
+
+const getStatusConfigForCell = (status: VehicleDocument['status']) => {
+  switch (status) {
+    case 'Compliant':
+      return { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default' as const };
+    case 'ExpiringSoon':
+      return { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary' as const };
+    case 'Overdue':
+      return { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive' as const };
+    case 'Missing':
+    default:
+      return { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline' as const };
+  }
+};
+
+const documentTypesForTable: DocumentType[] = ['Insurance', 'Fitness', 'AITP', 'PUC'];
 
 
 export default function VehiclesPage() {
@@ -91,7 +120,6 @@ export default function VehiclesPage() {
       grouped[typeKey].push(vehicle);
     });
     setVehiclesByType(grouped);
-    // By default, open the first few groups or all if less than a few
     setOpenAccordionItems(Object.keys(grouped).slice(0, 3)); 
     setIsLoading(false);
   };
@@ -112,13 +140,54 @@ export default function VehiclesPage() {
       const result = await handleDeleteVehicleServerAction(vehicleToDelete.id);
       if (result.success) {
         toast({ title: "Vehicle Deleted", description: `Vehicle ${vehicleToDelete.registrationNumber} has been deleted.` });
-        fetchAndGroupVehicles(); // Re-fetch and re-group
+        fetchAndGroupVehicles(); 
       } else {
         toast({ title: "Error", description: result.error, variant: "destructive" });
       }
       setIsConfirmDeleteDialogOpen(false);
       setVehicleToDelete(null);
     });
+  };
+
+  const renderDocumentStatusCell = (vehicle: Vehicle, docType: DocumentType) => {
+    const latestDoc = getLatestDocumentForType(vehicle, docType);
+    
+    if (latestDoc && latestDoc.expiryDate) {
+      const status = getDocumentComplianceStatus(latestDoc.expiryDate);
+      const config = getStatusConfigForCell(status);
+      const StatusIcon = config.icon;
+      const expiry = parseISO(latestDoc.expiryDate);
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      expiry.setHours(23,59,59,999);
+      const daysDiff = differenceInDays(expiry, now);
+  
+      return (
+        <div className="flex flex-col items-start text-left">
+          <Badge 
+            variant={config.badgeVariant} 
+            className={cn(
+              "text-xs mb-0.5 whitespace-nowrap",
+              status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
+              status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
+            )}
+          >
+            <StatusIcon className={cn("mr-1 h-3 w-3", config.color)} />
+            {status}
+          </Badge>
+          <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+            {format(expiry, DATE_FORMAT)}
+          </span>
+          <span className={cn("text-[11px] whitespace-nowrap",
+             daysDiff < 0 ? 'text-red-600 font-medium' : 'text-muted-foreground',
+             daysDiff >=0 && daysDiff < 30 && 'text-yellow-600 font-medium'
+          )}>
+            {daysDiff < 0 ? `${Math.abs(daysDiff)}d overdue` : `${daysDiff}d left`}
+          </span>
+        </div>
+      );
+    }
+    return <Badge variant="outline" className="text-xs whitespace-nowrap">Missing</Badge>;
   };
   
   if (isLoading) {
@@ -179,35 +248,41 @@ export default function VehiclesPage() {
                     <div className="flex items-center gap-2">
                         <Car className="h-5 w-5 text-primary"/> 
                         {type} ({vehicleList.length})
+                        <Badge variant={getOverallVehicleStatusBadge(vehicleList.reduce((prev, curr) => {
+                            // For overall badge, just pick the first vehicle or a composite logic if needed
+                            return curr; 
+                        }, vehicleList[0])).variant} 
+                        className={cn("ml-2", 
+                            getOverallVehicleStatusBadge(vehicleList[0]).status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
+                            getOverallVehicleStatusBadge(vehicleList[0]).status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
+                        )}>
+                            <span className="hidden sm:inline">{getOverallVehicleStatusBadge(vehicleList[0]).status}</span>
+                        </Badge>
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="pt-0 pb-2">
+                    <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Registration No.</TableHead>
-                          <TableHead>Make & Model</TableHead>
-                          <TableHead>Compliance Status</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableHead className="min-w-[120px]">Registration No.</TableHead>
+                          <TableHead className="min-w-[150px]">Make & Model</TableHead>
+                          {documentTypesForTable.map(docType => (
+                            <TableHead key={docType} className="min-w-[130px] text-center">{docType}</TableHead>
+                          ))}
+                          <TableHead className="text-right min-w-[100px]">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {vehicleList.map((vehicle) => {
-                          const statusInfo = getOverallVehicleStatusBadge(vehicle);
-                          const StatusIcon = statusInfo.icon;
-                          return (
+                        {vehicleList.map((vehicle) => (
                             <TableRow key={vehicle.id}>
                               <TableCell className="font-medium">{vehicle.registrationNumber}</TableCell>
                               <TableCell>{vehicle.make} {vehicle.model}</TableCell>
-                              <TableCell>
-                                <Badge variant={statusInfo.variant} className={cn(
-                                  statusInfo.status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
-                                  statusInfo.status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
-                                )}>
-                                  <StatusIcon className="mr-1 h-3 w-3" />
-                                  {statusInfo.status}
-                                </Badge>
-                              </TableCell>
+                              {documentTypesForTable.map(docType => (
+                                <TableCell key={docType} className="text-center">
+                                  {renderDocumentStatusCell(vehicle, docType)}
+                                </TableCell>
+                              ))}
                               <TableCell className="text-right">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
@@ -236,10 +311,10 @@ export default function VehiclesPage() {
                                 </DropdownMenu>
                               </TableCell>
                             </TableRow>
-                          );
-                        })}
+                          ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
               ))}
