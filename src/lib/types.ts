@@ -1,5 +1,4 @@
 
-
 export type VehicleType = 'Car' | 'Truck' | 'Bus' | 'Van' | 'Motorcycle' | 'Other';
 export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
@@ -51,9 +50,10 @@ export interface User {
 export interface SummaryStats {
   totalVehicles: number;
   compliantVehicles: number;
-  expiringSoonDocuments: number;
-  overdueDocuments: number;
+  expiringSoonDocuments: number; // Overall count
+  overdueDocuments: number; // Overall count
 }
+
 
 export type AuditLogAction = 
   | 'CREATE_VEHICLE' | 'UPDATE_VEHICLE' | 'DELETE_VEHICLE'
@@ -69,4 +69,10 @@ export interface AuditLogEntry {
   entityId: string;
   entityRegistration?: string; // For quick ref like vehicle reg number
   details: Record<string, any>; // Flexible JSON blob for action-specific details
+}
+
+export interface ReportableDocument extends VehicleDocument {
+  vehicleRegistration: string;
+  // vehicleId is already in VehicleDocument
+  daysDifference: number; // positive for days left, negative for days overdue
 }

@@ -1,9 +1,8 @@
-
 'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, List, BarChart2, Bell, Settings, Car, FileText, Users, LogOut } from 'lucide-react';
+import { Home, List, BarChart2, Bell, Settings, Car, FileText, Users, LogOut, ClipboardList } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Sidebar,
@@ -18,7 +17,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { SheetTitle } from '@/components/ui/sheet'; // Correct import from sheet ui component
+import { SheetTitle } from '@/components/ui/sheet'; 
 import React, { useEffect, useState } from 'react';
 import { getAlerts } from '@/lib/data';
 
@@ -26,6 +25,7 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
   { href: '/vehicles', label: 'Vehicles', icon: Car },
   { href: '/alerts', label: 'Alerts', icon: Bell, id: 'alertsLink' },
+  { href: '/reports/expiring-documents', label: 'Expiring Docs', icon: ClipboardList, id: 'reportsLink' },
 ];
 
 export function SidebarNav() {
@@ -45,6 +45,7 @@ export function SidebarNav() {
     }
     fetchAlertCount();
     
+    // Periodically update alert count
     const intervalId = setInterval(fetchAlertCount, 60000); // Refresh every minute
     return () => clearInterval(intervalId);
   }, []);
@@ -54,19 +55,20 @@ export function SidebarNav() {
     <Sidebar side="left" variant="sidebar" collapsible="icon">
       <SidebarHeader className="p-4">
         {isMobile ? (
-          <SheetTitle asChild>
-            <Link href="/" className="flex items-center gap-2">
-              <Home className="h-8 w-8 text-primary" />
-              <span className="text-xl font-bold font-headline text-primary">FleetSync</span>
-            </Link>
-          </SheetTitle>
+           <Link href="/" className="flex items-center gap-2">
+            <SheetTitle asChild>
+                <span className="flex items-center gap-2">
+                    <Home className="h-8 w-8 text-primary" />
+                    <span className="text-xl font-bold font-headline text-primary">FleetSync</span>
+                </span>
+            </SheetTitle>
+           </Link>
         ) : (
           <Link href="/" className="flex items-center gap-2">
             <Home className="h-8 w-8 text-primary" />
             {sidebarState === 'expanded' && (
               <h1 className="text-xl font-bold font-headline text-primary">FleetSync</h1>
             )}
-            {/* If sidebarState is 'collapsed' on desktop, no text title is rendered here, only the icon. */}
           </Link>
         )}
       </SidebarHeader>
@@ -74,14 +76,15 @@ export function SidebarNav() {
         <SidebarMenu>
           {navItems.map((item) => (
             <SidebarMenuItem key={item.href}>
-              <Link href={item.href}>
+              <Link href={item.href} passHref>
                 <SidebarMenuButton
-                  asChild={false} 
                   className={cn(
                     'w-full justify-start',
-                    pathname === item.href ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
+                    pathname === item.href || (item.href.startsWith('/reports') && pathname.startsWith('/reports'))
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-muted'
                   )}
-                  isActive={pathname === item.href}
+                  isActive={pathname === item.href || (item.href.startsWith('/reports') && pathname.startsWith('/reports'))}
                   tooltip={sidebarState === 'collapsed' ? item.label : undefined}
                 >
                   <item.icon className="h-5 w-5 mr-3" />
@@ -116,5 +119,3 @@ export function SidebarNav() {
     </Sidebar>
   );
 }
-
-    

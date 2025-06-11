@@ -1,14 +1,50 @@
+
+"use client"; // Required for useState, AlertDialog, and client-side interactions
+
 import Link from 'next/link';
-import { PlusCircle, Car, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { PlusCircle, Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { getVehicles, getDocumentComplianceStatus } from '@/lib/data';
 import type { Vehicle } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { MoreHorizontal } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator
+} from '@/components/ui/dropdown-menu';
+import React, { useState, useTransition, useEffect } from 'react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { handleDeleteVehicleServerAction } from './actions';
+
 
 const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo', variant: 'default' | 'secondary' | 'destructive' | 'outline', icon: React.ElementType } => {
   let hasOverdue = false;
@@ -27,14 +63,62 @@ const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' |
   });
 
   if (hasOverdue) return { status: 'Overdue', variant: 'destructive', icon: AlertTriangle };
-  if (hasExpiringSoon) return { status: 'ExpiringSoon', variant: 'secondary', icon: Clock }; // Typically yellow, secondary might be grey. Consider custom yellow badge.
-  if (hasMissing) return { status: 'MissingInfo', variant: 'outline', icon: AlertTriangle }; // Orange/Gray
-  return { status: 'Compliant', variant: 'default', icon: CheckCircle2 }; // Green
+  if (hasExpiringSoon) return { status: 'ExpiringSoon', variant: 'secondary', icon: Clock };
+  if (hasMissing) return { status: 'MissingInfo', variant: 'outline', icon: AlertTriangle };
+  return { status: 'Compliant', variant: 'default', icon: CheckCircle2 };
 };
 
 
-export default async function VehiclesPage() {
-  const vehicles = await getVehicles();
+export default function VehiclesPage() {
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, startDeleteTransition] = useTransition();
+  const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
+  const [isConfirmDeleteDialogOpen, setIsConfirmDeleteDialogOpen] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    async function fetchVehicles() {
+      setIsLoading(true);
+      const fetchedVehicles = await getVehicles();
+      setVehicles(fetchedVehicles);
+      setIsLoading(false);
+    }
+    fetchVehicles();
+  }, []);
+
+  const handleDeleteClick = (vehicle: Vehicle) => {
+    setVehicleToDelete(vehicle);
+    setIsConfirmDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!vehicleToDelete) return;
+
+    startDeleteTransition(async () => {
+      const result = await handleDeleteVehicleServerAction(vehicleToDelete.id);
+      if (result.success) {
+        toast({ title: "Vehicle Deleted", description: `Vehicle ${vehicleToDelete.registrationNumber} has been deleted.` });
+        // Refresh data
+        const updatedVehicles = await getVehicles();
+        setVehicles(updatedVehicles);
+      } else {
+        toast({ title: "Error", description: result.error, variant: "destructive" });
+      }
+      setIsConfirmDeleteDialogOpen(false);
+      setVehicleToDelete(null);
+    });
+  };
+  
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <Car className="w-12 h-12 animate-pulse text-primary" />
+        <p className="ml-4 text-lg text-muted-foreground">Loading vehicles...</p>
+      </div>
+    );
+  }
+
 
   return (
     <div className="flex flex-col gap-6">
@@ -66,7 +150,7 @@ export default async function VehiclesPage() {
         <Card>
           <CardHeader>
             <CardTitle>Vehicle Fleet</CardTitle>
-            <CardDescription>A list of all vehicles in your fleet.</CardDescription>
+            <CardDescription>A list of all vehicles in your fleet ({vehicles.length} total).</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -112,7 +196,13 @@ export default async function VehiclesPage() {
                             <DropdownMenuItem asChild>
                                <Link href={`/vehicles/${vehicle.id}/edit`}>Edit Vehicle</Link>
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-red-600">
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-red-600 hover:!bg-red-500 hover:!text-white focus:!bg-red-500 focus:!text-white"
+                              onClick={() => handleDeleteClick(vehicle)}
+                              disabled={isDeleting}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
                               Delete Vehicle
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -126,6 +216,28 @@ export default async function VehiclesPage() {
           </CardContent>
         </Card>
       )}
+       <AlertDialog open={isConfirmDeleteDialogOpen} onOpenChange={setIsConfirmDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the vehicle
+              <span className="font-semibold"> {vehicleToDelete?.registrationNumber} </span>
+              and all its associated documents and alerts.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={isDeleting}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              {isDeleting ? "Deleting..." : "Yes, delete vehicle"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
