@@ -12,13 +12,26 @@ import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
 import { DATE_FORMAT, AI_SUPPORTED_DOCUMENT_TYPES } from '@/lib/constants';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, use } from 'react'; // Added use
 import { DocumentUploadModal } from '@/components/document/document-upload-modal';
 import { useToast } from '@/hooks/use-toast';
 import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
 
-export default function VehicleDetailPage({ params }: { params: { id: string } }) {
-  const { id: vehicleId } = params; // Destructure id here
+// Page props can be a promise in some Next.js scenarios, especially with server-side aspects.
+// To align with Next.js guidance on unwrapping params, we'll handle it defensively.
+type VehicleDetailPageProps = {
+  params: { id: string } | Promise<{ id: string }>;
+};
+
+export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailPageProps) {
+  // Use React.use to unwrap the params if it's a promise, as suggested by Next.js warnings.
+  // This pattern handles cases where props might be promises.
+  const resolvedParams = typeof (paramsProp as Promise<{id: string}>)?.then === 'function' 
+    ? use(paramsProp as Promise<{id: string}>) 
+    : paramsProp as {id: string};
+  
+  const { id: vehicleId } = resolvedParams; // Now destructure from resolved params
+
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -27,18 +40,21 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
   const { toast } = useToast();
 
   useEffect(() => {
-    async function fetchVehicle() {
-      setIsLoading(true);
-      const fetchedVehicle = await getVehicleById(vehicleId); // Use destructured id
-      if (!fetchedVehicle) {
-        notFound();
-      } else {
-        setVehicle(fetchedVehicle);
+    // vehicleId is now guaranteed to be from resolved params
+    if (vehicleId) {
+      async function fetchVehicle() {
+        setIsLoading(true);
+        const fetchedVehicle = await getVehicleById(vehicleId);
+        if (!fetchedVehicle) {
+          notFound();
+        } else {
+          setVehicle(fetchedVehicle);
+        }
+        setIsLoading(false);
       }
-      setIsLoading(false);
+      fetchVehicle();
     }
-    fetchVehicle();
-  }, [vehicleId]); // Use destructured id in dependency array
+  }, [vehicleId]); // vehicleId is stable after use() and destructuring
 
   const getStatusConfig = (status: VehicleDocument['status']) => {
     switch (status) {
@@ -55,7 +71,7 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
   };
 
   const handleOpenUploadModal = (doc?: VehicleDocument) => {
-    setEditingDocument(doc || { type: 'Insurance' }); // Default or existing
+    setEditingDocument(doc || { type: 'Insurance' });
     setIsModalOpen(true);
   };
 
@@ -87,7 +103,7 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
       }
       setIsModalOpen(false);
       setEditingDocument(null);
-      router.refresh(); // To ensure data consistency if alerts/summaries are affected
+      router.refresh(); 
     } catch (error) {
       console.error('Failed to submit document:', error);
       toast({ title: 'Error', description: 'Failed to save document. Please try again.', variant: 'destructive' });
@@ -156,7 +172,7 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
               </TableHeader>
               <TableBody>
                 {vehicle.documents.map((doc) => {
-                  const status = getDocumentComplianceStatus(doc.expiryDate); // Re-evaluate status client-side too
+                  const status = getDocumentComplianceStatus(doc.expiryDate); 
                   const config = getStatusConfig(status);
                   const StatusIcon = config.icon;
                   return (
@@ -201,11 +217,6 @@ export default function VehicleDetailPage({ params }: { params: { id: string } }
             </div>
           )}
         </CardContent>
-        {/* <CardFooter>
-            <Button variant="outline" onClick={() => handleOpenUploadModal({ type: 'Other' })}>
-                <FileText className="mr-2 h-4 w-4" /> Add Custom Document Type
-            </Button>
-        </CardFooter> */}
       </Card>
 
       {isModalOpen && vehicle && (
