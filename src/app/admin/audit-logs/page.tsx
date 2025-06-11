@@ -11,9 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Badge } from '@/components/ui/badge'; // Added import for Badge
 import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
-import { ShieldCheck, Search, FilterX, CalendarIcon, ArrowUpDown, ListFilter, Users } from 'lucide-react';
+import { ShieldCheck, Search, FilterX, CalendarIcon, ArrowUpDown, ListFilter, Users, AlertTriangle } from 'lucide-react';
 import { AUDIT_LOG_ACTIONS, AUDIT_ENTITY_TYPES, DATE_FORMAT } from '@/lib/constants';
 import type { DateRange } from "react-day-picker";
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
