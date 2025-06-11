@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Badge } from '@/components/ui/badge'; // Added import for Badge
+import { Badge } from '@/components/ui/badge';
 import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { ShieldCheck, Search, FilterX, CalendarIcon, ArrowUpDown, ListFilter, Users, AlertTriangle } from 'lucide-react';
@@ -32,10 +32,9 @@ export default function AuditLogsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  // Filters from URL state or component state
   const [actionFilter, setActionFilter] = useState<AuditLogAction | 'All'>(searchParams.get('action') as AuditLogAction || 'All');
   const [entityTypeFilter, setEntityTypeFilter] = useState<AuditLogEntry['entityType'] | 'All'>(searchParams.get('entityType') as AuditLogEntry['entityType'] || 'All');
-  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || ''); // For entityId or entityRegistration
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || ''); 
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
     from: searchParams.get('from') ? parseISO(searchParams.get('from')!) : undefined,
     to: searchParams.get('to') ? parseISO(searchParams.get('to')!) : undefined,
@@ -60,7 +59,6 @@ export default function AuditLogsPage() {
       const user = await getCurrentUser();
       setCurrentUser(user);
       if (user?.role !== 'admin') {
-        // Basic protection, in a real app this would be route-level
         router.push('/'); 
         return;
       }
@@ -75,9 +73,8 @@ export default function AuditLogsPage() {
       setIsLoading(false);
     }
     fetchData();
-  }, [actionFilter, entityTypeFilter, dateRange, router]); // Re-fetch when server-side filters change
+  }, [actionFilter, entityTypeFilter, dateRange]); // Removed router from dependencies
 
-  // Client-side filtering for searchTerm
   const clientFilteredLogs = useMemo(() => {
     if (!searchTerm) return logs;
     const lowerSearchTerm = searchTerm.toLowerCase();
@@ -89,7 +86,6 @@ export default function AuditLogsPage() {
     );
   }, [logs, searchTerm]);
 
-  // Client-side sorting
   const sortedLogs = useMemo(() => {
     return [...clientFilteredLogs].sort((a, b) => {
       let valA: any = a[sortColumn];
@@ -114,7 +110,7 @@ export default function AuditLogsPage() {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortColumn(column);
-      setSortDirection(sortDirection === 'desc' && column === 'timestamp' ? 'desc' : 'asc'); // Default timestamp to desc
+      setSortDirection(sortDirection === 'desc' && column === 'timestamp' ? 'desc' : 'asc'); 
     }
   };
 
@@ -132,7 +128,7 @@ export default function AuditLogsPage() {
 
   const renderSortIcon = (column: SortableAuditColumn) => {
     if (sortColumn !== column) return <ArrowUpDown className="ml-2 h-3 w-3 opacity-30" />;
-    return sortDirection === 'asc' ? <ArrowUpDown className="ml-2 h-3 w-3" /> : <ArrowUpDown className="ml-2 h-3 w-3" />;
+    return sortDirection === 'asc' ? <ArrowUpDown className="ml-2 h-3 w-3" /> : <ArrowUpDown className="ml-2 h-3 w-3" />; // Icons should be ChevronUp/Down
   };
 
   if (isLoading && !currentUser) {
@@ -235,3 +231,4 @@ export default function AuditLogsPage() {
     </div>
   );
 }
+

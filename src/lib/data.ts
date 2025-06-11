@@ -1,7 +1,6 @@
 
-
-import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, ReportableDocument, UserRole, VehicleComplianceStatusBreakdown } from './types';
-import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT } from './constants';
+import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, UserRole, VehicleComplianceStatusBreakdown } from './types';
+import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT, AUDIT_LOG_ACTIONS } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays, isAfter } from 'date-fns';
 
 let vehicles: Vehicle[] = [];
@@ -112,7 +111,7 @@ const initializeDummyData = () => {
     return vehicleInstance;
   });
   generateAllAlerts(); 
-  internalLogAuditEvent('SYSTEM_START', 'SYSTEM', undefined, { message: 'Dummy data initialized' });
+  internalLogAuditEvent('SYSTEM_DATA_INITIALIZED', 'SYSTEM', undefined, { message: 'Dummy data initialized' });
 };
 
 
@@ -301,7 +300,7 @@ export async function addOrUpdateDocument(
   return JSON.parse(JSON.stringify(vehicle));
 }
 
-const getLatestDocumentForType = (vehicle: Vehicle, docType: DocumentType, customTypeName?: string): VehicleDocument | undefined => {
+export const getLatestDocumentForType = (vehicle: Vehicle, docType: DocumentType, customTypeName?: string): VehicleDocument | undefined => {
     const docsOfType = vehicle.documents.filter(d => 
         d.type === docType && 
         (docType !== 'Other' || d.customTypeName === customTypeName) &&
@@ -334,6 +333,7 @@ function generateAlertsForVehicle(vehicle: Vehicle) {
           a.documentType === doc.type && 
           (doc.type !== 'Other' || a.customDocumentTypeName === doc.customTypeName) &&
           a.dueDate === doc.expiryDate && 
+          a.policyNumber === doc.policyNumber && // Ensure alert is specific to this doc instance by policy#
           a.userId === MOCK_USER_ID &&
           !a.isRead 
       );
@@ -345,12 +345,13 @@ function generateAlertsForVehicle(vehicle: Vehicle) {
             vehicleRegistration: vehicle.registrationNumber,
             documentType: doc.type,
             customDocumentTypeName: doc.customTypeName,
+            policyNumber: doc.policyNumber, // Add policyNumber to alert context
             dueDate: doc.expiryDate, 
-            message: `${doc.type === 'Other' && doc.customTypeName ? doc.customTypeName : doc.type} for ${vehicle.registrationNumber} (Policy: ${doc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(doc.uploadedAt), 'MMM dd, yyyy')}) is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(doc.expiryDate), 'PPP')}` : `overdue since ${format(parseISO(doc.expiryDate), 'PPP')}`}.`,
+            message: `${doc.type === 'Other' && doc.customTypeName ? doc.customTypeName : doc.type} (Policy: ${doc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(doc.uploadedAt), 'MMM dd, yyyy')}) for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(doc.expiryDate), 'PPP')}` : `overdue since ${format(parseISO(doc.expiryDate), 'PPP')}`}.`,
             createdAt: formatISO(new Date()),
             isRead: false,
             userId: MOCK_USER_ID,
-          } as Alert);
+          } as Alert); 
       }
     }
   });
@@ -390,12 +391,15 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
   let hasAtLeastOneMissingActiveDocument = false;
 
   const relevantDocTypes = new Set<string>();
-  DOCUMENT_TYPES.forEach(dt => relevantDocTypes.add(dt === 'Other' ? `Other:${dt}` : dt)); // Use a unique key for general 'Other'
+  DOCUMENT_TYPES.forEach(dt => {
+    // For each standard document type, we expect one active instance.
+    relevantDocTypes.add(dt);
+  });
+  
+  // Add specific 'Other' document types that are present in the vehicle
   vehicle.documents.forEach(doc => {
       if (doc.type === 'Other' && doc.customTypeName) {
           relevantDocTypes.add(`Other:${doc.customTypeName}`);
-      } else {
-          relevantDocTypes.add(doc.type);
       }
   });
 
@@ -407,34 +411,46 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
     if (typeKey.startsWith('Other:')) {
         docType = 'Other';
         customTypeName = typeKey.split(':')[1];
-        if (customTypeName === 'Other') customTypeName = undefined; // Handles the generic "Other" without custom name if any exists
     } else {
         docType = typeKey as DocumentType;
     }
     
-    // Skip if it's the generic 'Other' type and we only want to process explicitly named 'Other' types or standard types
-    if (docType === 'Other' && !customTypeName && !DOCUMENT_TYPES.includes('Other')) continue;
-
-
     const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeName);
     
     if (!latestDoc || latestDoc.status === 'Missing') { 
-      // This logic needs to be careful: a 'Missing' status for a *type* means no *active* document exists.
-      // If all docs of a type are historical and expired, that type is effectively "Missing" for current compliance.
-      // `getLatestDocumentForType` already filters for docs with expiry dates for "active" consideration.
-      // If it returns undefined, it means no such active document was found.
       hasAtLeastOneMissingActiveDocument = true;
-      break; 
-    }
-    const status = latestDoc.status; // Status of the latest *active* document
-    if (status === 'Overdue') {
-      overallStatus = 'Overdue';
-    } else if (status === 'ExpiringSoon' && overallStatus !== 'Overdue') {
-      overallStatus = 'ExpiringSoon';
+      // If any required document type is completely missing an active instance, vehicle status is 'MissingInfo'
+      // unless overridden by an 'Overdue' status from another document.
+      if (overallStatus !== 'Overdue' && overallStatus !== 'ExpiringSoon') {
+         overallStatus = 'MissingInfo';
+      }
+      // If it's already Overdue or ExpiringSoon, don't change to MissingInfo, but note that something is missing.
+      // This break is removed to evaluate all document types for the worst status.
+    } else {
+        const status = latestDoc.status;
+        if (status === 'Overdue') {
+          overallStatus = 'Overdue'; // Overdue is the highest priority
+        } else if (status === 'ExpiringSoon' && overallStatus !== 'Overdue') {
+          overallStatus = 'ExpiringSoon'; // ExpiringSoon is next
+        } else if (status === 'Compliant' && overallStatus !== 'Overdue' && overallStatus !== 'ExpiringSoon' && overallStatus !== 'MissingInfo') {
+          // If all others are compliant, and nothing is missing/overdue/expiring
+          overallStatus = 'Compliant';
+        }
     }
   }
 
-  if (hasAtLeastOneMissingActiveDocument) return 'MissingInfo';
+  // If after checking all docs, the status is still 'Compliant' but we found a missing active one earlier, it's 'MissingInfo'.
+  if (hasAtLeastOneMissingActiveDocument && overallStatus === 'Compliant') {
+    return 'MissingInfo';
+  }
+  // If hasAtLeastOneMissingActiveDocument is true, and status is ExpiringSoon, it should be ExpiringSoon
+  // because an expiring document is more critical than a missing one that isn't overdue.
+  // The priority is Overdue > ExpiringSoon > MissingInfo > Compliant.
+  if (hasAtLeastOneMissingActiveDocument && overallStatus !== 'Overdue' && overallStatus !== 'ExpiringSoon') {
+      return 'MissingInfo';
+  }
+
+
   return overallStatus;
 };
 
@@ -471,19 +487,34 @@ export async function getSummaryStats(): Promise<SummaryStats> {
       case 'MissingInfo': vehicleComplianceBreakdown.missingInfo++; break;
     }
     
-    // Iterate over unique document types present in the vehicle to count for summary cards
-    const uniqueDocTypesInVehicle = new Map<string, VehicleDocument>();
-
+    const uniqueActiveDocTypesInVehicle = new Map<string, VehicleDocument>();
+    const docTypesPresent = new Set<string>();
+    DOCUMENT_TYPES.forEach(dt => docTypesPresent.add(dt));
     vehicle.documents.forEach(doc => {
-        const typeKey = doc.type === 'Other' && doc.customTypeName ? `Other:${doc.customTypeName}` : doc.type;
-        const latestForType = getLatestDocumentForType(vehicle, doc.type, doc.customTypeName);
-        if (latestForType) {
-            uniqueDocTypesInVehicle.set(typeKey, latestForType);
+        if (doc.type === 'Other' && doc.customTypeName) {
+            docTypesPresent.add(`Other:${doc.customTypeName}`);
+        } else {
+            docTypesPresent.add(doc.type);
+        }
+    });
+
+    docTypesPresent.forEach(typeKey => {
+        let docType: DocumentType;
+        let customTypeName: string | undefined;
+        if (typeKey.startsWith('Other:')) {
+            docType = 'Other';
+            customTypeName = typeKey.split(':')[1];
+        } else {
+            docType = typeKey as DocumentType;
+        }
+        const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeName);
+        if (latestDoc) { // Only count if there's an active (latest) document for this type
+            uniqueActiveDocTypesInVehicle.set(typeKey, latestDoc);
         }
     });
 
 
-    uniqueDocTypesInVehicle.forEach(latestDoc => {
+    uniqueActiveDocTypesInVehicle.forEach(latestDoc => {
         if (latestDoc.status === 'ExpiringSoon') {
             expiringSoonDocumentsCount++;
             if (docTypeCounts.expiring[latestDoc.type] !== undefined) {
@@ -609,8 +640,6 @@ export async function getAuditLogs(filters?: {
 }
 
 export async function recordCsvExportAudit(reportName: string, formatUsed: string, filtersApplied: Record<string, any>) {
-  // 'use server'; // This directive should be at the top of the file if all functions are server actions, or in a separate actions.ts file.
-                  // For a data utility file like this, it's usually not placed inline.
   internalLogAuditEvent('EXPORT_REPORT', 'REPORT', undefined, {
     reportName,
     format: formatUsed, 
@@ -619,3 +648,5 @@ export async function recordCsvExportAudit(reportName: string, formatUsed: strin
 }
 
 initializeDummyData();
+
+

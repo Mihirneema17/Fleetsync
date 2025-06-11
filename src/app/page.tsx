@@ -1,12 +1,11 @@
 
-
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, ActivitySquare, Leaf, Paperclip, PieChart as PieChartIcon, AlertCircle, Loader2 } from 'lucide-react';
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { getSummaryStats, getVehicles, getAlerts, getDocumentComplianceStatus, getOverallVehicleCompliance } from '@/lib/data';
+import { getSummaryStats, getVehicles, getAlerts, getDocumentComplianceStatus, getOverallVehicleCompliance, getLatestDocumentForType } from '@/lib/data';
 import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument, VehicleComplianceStatusBreakdown } from '@/lib/types';
 import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -31,13 +30,13 @@ import { PieChart, Pie, Cell, Tooltip as RechartsTooltip } from "recharts";
 interface DocumentAlertItem {
   vehicleId: string;
   vehicleRegistration: string;
-  documentId: string; // ID of the specific document instance
+  documentId: string;
   documentType: DocumentType;
   customTypeName?: string;
   expiryDate: string;
   statusText: string;
   statusVariant: 'destructive' | 'secondary' | 'default' | 'outline';
-  daysDiff: number; 
+  daysDiff: number;
 }
 
 const documentTypeIcons: Record<DocumentType | 'Generic', React.ElementType> = {
@@ -59,7 +58,7 @@ const chartConfig: ChartConfig = {
 export default function DashboardPage() {
   const [stats, setStats] = useState<SummaryStats | null>(null);
   const [recentVehicles, setRecentVehicles] = useState<Vehicle[]>([]);
-  const [alerts, setAlerts] = useState<AlertType[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<AlertType[]>([]);
   const [allVehicles, setAllVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -69,29 +68,23 @@ export default function DashboardPage() {
       const [summary, vehiclesData, alertsData] = await Promise.all([
         getSummaryStats(),
         getVehicles(),
-        getAlerts().then(a => a.filter(al => !al.isRead).slice(0, 5)) // Get all alerts, then filter client-side for unread
+        getAlerts(true) // Fetch only unread alerts
       ]);
       setStats(summary);
-      setAllVehicles(vehiclesData); // Store all vehicles for document status section
+      setAllVehicles(vehiclesData);
       setRecentVehicles(vehiclesData.slice(0, 4));
-      setAlerts(alertsData);
+      setRecentAlerts(alertsData.slice(0,5)); // Show top 5 unread alerts
       setIsLoading(false);
     }
     fetchData();
   }, []);
 
-  // Process vehicles to find the LATEST document of each type that is ExpiringSoon or Overdue
-  const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docTypeToFilter: DocumentType): DocumentAlertItem[] => {
+  const processVehiclesForDocumentAlerts = useCallback((vehicles: Vehicle[], docTypeToFilter: DocumentType): DocumentAlertItem[] => {
     const items: DocumentAlertItem[] = [];
     const now = new Date();
 
     vehicles.forEach(vehicle => {
-      // Find the latest document of the specified type for this vehicle
-      const docsOfType = vehicle.documents.filter(d => d.type === docTypeToFilter && d.expiryDate);
-      if (docsOfType.length === 0) return;
-
-      docsOfType.sort((a, b) => parseISO(b.expiryDate!).getTime() - parseISO(a.expiryDate!).getTime());
-      const latestDoc = docsOfType[0]; // This is the most recent document of this type
+      const latestDoc = getLatestDocumentForType(vehicle, docTypeToFilter);
 
       if (latestDoc && latestDoc.expiryDate) {
         const expiry = parseISO(latestDoc.expiryDate);
@@ -113,7 +106,7 @@ export default function DashboardPage() {
           items.push({
             vehicleId: vehicle.id,
             vehicleRegistration: vehicle.registrationNumber,
-            documentId: latestDoc.id, // ID of this specific document instance
+            documentId: latestDoc.id,
             documentType: latestDoc.type,
             customTypeName: latestDoc.customTypeName,
             expiryDate: latestDoc.expiryDate,
@@ -124,15 +117,17 @@ export default function DashboardPage() {
         }
       }
     });
-    return items.sort((a, b) => a.daysDiff - b.daysDiff); // Sort by urgency
-  };
+    return items.sort((a, b) => a.daysDiff - b.daysDiff);
+  }, []);
   
-  const documentSections = DOCUMENT_TYPES.filter(type => type !== 'Other').map(docType => ({ // Exclude 'Other' from these specific dashboard sections for now
-    title: `${docType} Status`,
-    docType: docType,
-    items: processVehiclesForDocumentAlerts(allVehicles, docType),
-    icon: documentTypeIcons[docType] || documentTypeIcons.Generic,
-  }));
+  const documentSections = useMemo(() => {
+    return DOCUMENT_TYPES.filter(type => type !== 'Other').map(docType => ({
+        title: `${docType} Status`,
+        docType: docType,
+        items: processVehiclesForDocumentAlerts(allVehicles, docType),
+        icon: documentTypeIcons[docType] || documentTypeIcons.Generic,
+    }));
+  }, [allVehicles, processVehiclesForDocumentAlerts]);
 
 
   const chartData = stats?.vehicleComplianceBreakdown ? [
@@ -155,29 +150,29 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-8">
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard 
-          title="Total Vehicles" 
-          value={stats.totalVehicles} 
+        <SummaryCard
+          title="Total Vehicles"
+          value={stats.totalVehicles}
           icon={Car}
           iconClassName="text-primary"
         />
-        <SummaryCard 
-          title="Compliant Vehicles" 
+        <SummaryCard
+          title="Compliant Vehicles"
           value={`${stats.vehicleComplianceBreakdown.compliant} / ${stats.totalVehicles}`}
           icon={CheckCircle}
           description={`${stats.totalVehicles > 0 ? ((stats.vehicleComplianceBreakdown.compliant/stats.totalVehicles)*100).toFixed(0) : 0}% fleet compliance`}
           iconClassName="text-green-500"
         />
-        <SummaryCard 
-          title="Expiring Soon (Active Docs)" 
-          value={stats.expiringSoonDocuments} 
+        <SummaryCard
+          title="Expiring Soon (Active Docs)"
+          value={stats.expiringSoonDocuments}
           icon={FileWarning}
           description="Total active documents needing attention"
           iconClassName="text-yellow-500"
         />
-        <SummaryCard 
-          title="Overdue (Active Docs)" 
-          value={stats.overdueDocuments} 
+        <SummaryCard
+          title="Overdue (Active Docs)"
+          value={stats.overdueDocuments}
           icon={ShieldAlert}
           description="Total active documents requiring immediate action"
           iconClassName="text-red-500"
@@ -284,7 +279,7 @@ export default function DashboardPage() {
                               </Link>
                             </TableCell>
                             <TableCell>
-                              <Badge 
+                              <Badge
                                 variant={item.statusVariant}
                                 className={cn(
                                   item.statusVariant === 'secondary' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : ''
@@ -309,7 +304,7 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
-      
+
 
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2">
@@ -318,17 +313,17 @@ export default function DashboardPage() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold font-headline">Recent Alerts</h2>
-            {alerts.length > 0 && <Link href="/alerts"><Button variant="outline" size="sm">View All</Button></Link>}
+            {recentAlerts.length > 0 && <Link href="/alerts"><Button variant="outline" size="sm">View All</Button></Link>}
           </div>
-          {alerts.length > 0 ? (
+          {recentAlerts.length > 0 ? (
             <ScrollArea className="h-[400px] rounded-md border p-2 bg-card">
               <div className="space-y-3 p-2">
-              {alerts.map((alert) => (
+              {recentAlerts.map((alert) => (
                 <Alert key={alert.id} variant={alert.dueDate && new Date(alert.dueDate) < new Date() ? "destructive" : "default"} className="shadow-sm">
                   <ShieldAlert className="h-4 w-4" />
-                  <AlertTitle className="font-semibold text-sm">{alert.documentType === 'Other' && alert.customDocumentTypeName ? alert.customDocumentTypeName : alert.documentType} - {alert.vehicleRegistration}</AlertTitle>
+                  <AlertTitle className="font-semibold text-sm">{alert.documentType === 'Other' && alert.customDocumentTypeName ? alert.customDocumentTypeName : alert.documentType} (Policy: {alert.policyNumber || 'N/A'}) - {alert.vehicleRegistration}</AlertTitle>
                   <AlertDescription className="text-xs">
-                    {alert.message}
+                    {alert.message.replace(`(Policy: ${alert.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(alert.createdAt), 'MMM dd, yyyy')})`, '')}
                     <div className="text-xs text-muted-foreground mt-1">
                       Due: {format(parseISO(alert.dueDate), 'MMM dd, yyyy')} - created {formatDistanceToNow(parseISO(alert.createdAt), { addSuffix: true })}
                     </div>
@@ -348,7 +343,7 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
-      
+
     </div>
   );
 }
