@@ -52,7 +52,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       }
     : {
         registrationNumber: "",
-        type: "", 
+        type: "",
         make: "",
         model: "",
       };
@@ -70,8 +70,8 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
         title: isEditing ? "Vehicle Updated" : "Vehicle Added",
         description: `Vehicle ${data.registrationNumber} has been successfully ${isEditing ? 'updated' : 'added'}.`,
       });
-      router.push("/vehicles"); 
-      router.refresh(); 
+      router.push("/vehicles");
+      router.refresh();
     } catch (error) {
       toast({
         title: "Error",
@@ -116,19 +116,17 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
                 <FormItem>
                   <FormLabel>Vehicle Type</FormLabel>
                   <FormControl>
-                    <>
-                      <Input 
-                        placeholder="e.g., Car, Truck, Custom Van" 
-                        {...field} 
-                        list="vehicle-type-suggestions"
-                      />
-                      <datalist id="vehicle-type-suggestions">
-                        {VEHICLE_TYPES.map((type) => (
-                          <option key={type} value={type} />
-                        ))}
-                      </datalist>
-                    </>
+                    <Input
+                      placeholder="e.g., Car, Truck, Custom Van"
+                      {...field}
+                      list="vehicle-type-suggestions"
+                    />
                   </FormControl>
+                  <datalist id="vehicle-type-suggestions">
+                    {VEHICLE_TYPES.map((type) => (
+                      <option key={type} value={type} />
+                    ))}
+                  </datalist>
                   <FormDescription>Choose from suggestions or enter a custom vehicle type.</FormDescription>
                   <FormMessage />
                 </FormItem>
