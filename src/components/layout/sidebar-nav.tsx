@@ -18,9 +18,9 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { SheetTitle } from '@/components/ui/sheet';
+import { SheetTitle } from '@/components/ui/sheet'; // Correct import from sheet ui component
 import React, { useEffect, useState } from 'react';
-import { getAlerts } from '@/lib/data'; // Import getAlerts
+import { getAlerts } from '@/lib/data';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
@@ -45,7 +45,6 @@ export function SidebarNav() {
     }
     fetchAlertCount();
     
-    // Optional: set up an interval to refresh count, or use a more sophisticated state management
     const intervalId = setInterval(fetchAlertCount, 60000); // Refresh every minute
     return () => clearInterval(intervalId);
   }, []);
@@ -54,31 +53,37 @@ export function SidebarNav() {
   return (
     <Sidebar side="left" variant="sidebar" collapsible="icon">
       <SidebarHeader className="p-4">
-        <Link href="/" className="flex items-center gap-2">
-          <Home className="h-8 w-8 text-primary" />
-          {isMobile && sidebarState === 'collapsed' ? ( // Check if mobile and collapsed
-            <SheetTitle className="text-xl font-bold font-headline text-primary">FleetSync</SheetTitle>
-          ) : (
-            sidebarState === 'expanded' && (
+        {isMobile ? (
+          <SheetTitle asChild>
+            <Link href="/" className="flex items-center gap-2">
+              <Home className="h-8 w-8 text-primary" />
+              <span className="text-xl font-bold font-headline text-primary">FleetSync</span>
+            </Link>
+          </SheetTitle>
+        ) : (
+          <Link href="/" className="flex items-center gap-2">
+            <Home className="h-8 w-8 text-primary" />
+            {sidebarState === 'expanded' && (
               <h1 className="text-xl font-bold font-headline text-primary">FleetSync</h1>
-            )
-          )}
-        </Link>
+            )}
+            {/* If sidebarState is 'collapsed' on desktop, no text title is rendered here, only the icon. */}
+          </Link>
+        )}
       </SidebarHeader>
       <SidebarContent className="flex-1">
         <SidebarMenu>
           {navItems.map((item) => (
             <SidebarMenuItem key={item.href}>
-              <SidebarMenuButton
-                asChild
-                className={cn(
-                  'w-full justify-start',
-                  pathname === item.href ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
-                )}
-                isActive={pathname === item.href}
-                tooltip={sidebarState === 'collapsed' ? item.label : undefined}
-              >
-                <Link href={item.href}>
+              <Link href={item.href}>
+                <SidebarMenuButton
+                  asChild={false} 
+                  className={cn(
+                    'w-full justify-start',
+                    pathname === item.href ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
+                  )}
+                  isActive={pathname === item.href}
+                  tooltip={sidebarState === 'collapsed' ? item.label : undefined}
+                >
                   <item.icon className="h-5 w-5 mr-3" />
                   {sidebarState === 'expanded' && <span className="truncate">{item.label}</span>}
                   {item.id === 'alertsLink' && unreadAlertsCount > 0 && sidebarState === 'expanded' && (
@@ -89,8 +94,8 @@ export function SidebarNav() {
                    {item.id === 'alertsLink' && unreadAlertsCount > 0 && sidebarState === 'collapsed' && (
                      <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-destructive border-2 border-[var(--sidebar-background)]" />
                   )}
-                </Link>
-              </SidebarMenuButton>
+                </SidebarMenuButton>
+              </Link>
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
@@ -111,3 +116,5 @@ export function SidebarNav() {
     </Sidebar>
   );
 }
+
+    
