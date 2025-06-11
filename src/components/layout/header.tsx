@@ -1,5 +1,6 @@
+
 'use client';
-import { Menu, Search, Bell, UserCircle } from 'lucide-react';
+import { Menu, Search, Bell, UserCircle, Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -11,13 +12,24 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { SidebarTrigger } // Assuming you have this from your sidebar component
-from '@/components/ui/sidebar'; 
+import { SidebarTrigger } from '@/components/ui/sidebar'; 
 import { useIsMobile } from '@/hooks/use-mobile';
-
+import { useTheme } from 'next-themes';
+import { useEffect, useState } from 'react';
 
 export function Header() {
   const isMobile = useIsMobile();
+  const { setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+  };
+
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center gap-4 border-b bg-card px-4 md:px-6 shadow-sm">
       {isMobile && <SidebarTrigger />}
@@ -25,7 +37,7 @@ export function Header() {
         {/* Optional: Add a title or breadcrumbs here if not using sidebar trigger always */}
          {/* <h1 className="text-lg font-semibold font-headline">Dashboard</h1>  */}
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 md:gap-4">
         <form className="relative hidden md:block">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -34,6 +46,14 @@ export function Header() {
             className="pl-8 sm:w-[300px] md:w-[200px] lg:w-[300px] rounded-full bg-background"
           />
         </form>
+
+        {mounted && (
+          <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full">
+            {resolvedTheme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            <span className="sr-only">Toggle theme</span>
+          </Button>
+        )}
+        
         <Button variant="ghost" size="icon" className="rounded-full">
           <Bell className="h-5 w-5" />
           <span className="sr-only">Toggle notifications</span>
