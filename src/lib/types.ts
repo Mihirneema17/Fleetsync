@@ -1,4 +1,5 @@
 
+
 export type VehicleType = 'Car' | 'Truck' | 'Bus' | 'Van' | 'Motorcycle' | 'Other';
 export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
@@ -49,6 +50,16 @@ export interface User {
 export interface SummaryStats {
   totalVehicles: number;
   compliantVehicles: number;
-  expiringSoonDocuments: number;
-  overdueDocuments: number;
+  expiringSoonDocuments: number; // General count of all docs expiring soon
+  overdueDocuments: number; // General count of all docs overdue
+
+  insuranceExpiringSoon: number;
+  insuranceOverdue: number;
+  fitnessExpiringSoon: number;
+  fitnessOverdue: number;
+  pucExpiringSoon: number;
+  pucOverdue: number;
+  aitpExpiringSoon: number;
+  aitpOverdue: number;
 }
+

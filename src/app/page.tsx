@@ -1,4 +1,5 @@
-import { Car, FileWarning, ShieldAlert, Users, CheckCircle } from 'lucide-react';
+
+import { Car, FileWarning, ShieldAlert, Users, CheckCircle, ShieldCheck, ActivitySquare, Leaf, Paperclip } from 'lucide-react';
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
@@ -8,15 +9,23 @@ import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from '@/components/ui/badge';
-import { formatDistanceToNow } from 'date-fns';
+import { Card } from '@/components/ui/card';
+import { formatDistanceToNow, parseISO } from 'date-fns';
 
 export default async function DashboardPage() {
   const stats: SummaryStats = await getSummaryStats();
-  const recentVehicles: Vehicle[] = (await getVehicles()).slice(0, 4); // Display a few recent/problematic vehicles
+  const recentVehicles: Vehicle[] = (await getVehicles()).slice(0, 4); 
   const alerts: AlertType[] = (await getAlerts()).filter(a => !a.isRead).slice(0,5);
 
+  const getCardIconColor = (overdue: number, expiring: number) => {
+    if (overdue > 0) return 'text-red-500';
+    if (expiring > 0) return 'text-yellow-500';
+    return 'text-green-500';
+  };
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8"> {/* Increased gap for better separation */}
+      {/* General Stats */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <SummaryCard 
           title="Total Vehicles" 
@@ -32,20 +41,56 @@ export default async function DashboardPage() {
           iconClassName="text-green-500"
         />
         <SummaryCard 
-          title="Expiring Soon" 
+          title="Expiring Soon (All)" 
           value={stats.expiringSoonDocuments} 
           icon={FileWarning}
-          description="Documents needing attention"
+          description="Total documents needing attention"
           iconClassName="text-yellow-500"
         />
         <SummaryCard 
-          title="Overdue Documents" 
+          title="Overdue (All)" 
           value={stats.overdueDocuments} 
           icon={ShieldAlert}
-          description="Requires immediate action"
+          description="Total documents requiring immediate action"
           iconClassName="text-red-500"
         />
       </div>
+
+      {/* Document Specific Stats */}
+      <div>
+        <h2 className="text-2xl font-semibold font-headline mb-4">Document Compliance Status</h2>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <SummaryCard
+            title="Insurance"
+            value={`${stats.insuranceOverdue + stats.insuranceExpiringSoon} Alerts`}
+            icon={ShieldCheck}
+            description={`${stats.insuranceOverdue} overdue, ${stats.insuranceExpiringSoon} expiring`}
+            iconClassName={getCardIconColor(stats.insuranceOverdue, stats.insuranceExpiringSoon)}
+          />
+          <SummaryCard
+            title="Fitness"
+            value={`${stats.fitnessOverdue + stats.fitnessExpiringSoon} Alerts`}
+            icon={ActivitySquare}
+            description={`${stats.fitnessOverdue} overdue, ${stats.fitnessExpiringSoon} expiring`}
+            iconClassName={getCardIconColor(stats.fitnessOverdue, stats.fitnessExpiringSoon)}
+          />
+          <SummaryCard
+            title="PUC (Pollution)"
+            value={`${stats.pucOverdue + stats.pucExpiringSoon} Alerts`}
+            icon={Leaf}
+            description={`${stats.pucOverdue} overdue, ${stats.pucExpiringSoon} expiring`}
+            iconClassName={getCardIconColor(stats.pucOverdue, stats.pucExpiringSoon)}
+          />
+          <SummaryCard
+            title="AITP"
+            value={`${stats.aitpOverdue + stats.aitpExpiringSoon} Alerts`}
+            icon={Paperclip}
+            description={`${stats.aitpOverdue} overdue, ${stats.aitpExpiringSoon} expiring`}
+            iconClassName={getCardIconColor(stats.aitpOverdue, stats.aitpExpiringSoon)}
+          />
+        </div>
+      </div>
+      
 
       <div className="grid gap-6 md:grid-cols-3">
         <div className="md:col-span-2">
@@ -88,7 +133,7 @@ export default async function DashboardPage() {
                   <AlertDescription className="text-xs">
                     {alert.message}
                     <div className="text-xs text-muted-foreground mt-1">
-                      {formatDistanceToNow(new Date(alert.createdAt), { addSuffix: true })}
+                      {formatDistanceToNow(parseISO(alert.createdAt), { addSuffix: true })}
                     </div>
                   </AlertDescription>
                 </Alert>
@@ -107,18 +152,7 @@ export default async function DashboardPage() {
         </div>
       </div>
       
-      {/* Placeholder for future charts or more detailed widgets */}
-      {/* <div className="mt-6">
-        <h2 className="text-2xl font-semibold font-headline mb-4">Compliance Trends</h2>
-        <Card>
-          <CardHeader>
-            <CardTitle>Compliance Over Time (Placeholder)</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[300px] flex items-center justify-center text-muted-foreground">
-            Chart data will be displayed here.
-          </CardContent>
-        </Card>
-      </div> */}
     </div>
   );
 }
+

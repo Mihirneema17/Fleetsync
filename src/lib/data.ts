@@ -1,3 +1,4 @@
+
 // In a real application, this would interact with a database.
 // For now, we'll use in-memory storage that resets on server restart,
 // or potentially localStorage if we want persistence on the client for demo purposes.
@@ -37,6 +38,7 @@ const initializeDummyData = () => {
         if (docType === 'Insurance') expiryDate = addDays(today, Math.random() * 90); // Expires in 0-90 days
         else if (docType === 'Fitness') expiryDate = addDays(today, Math.random() * 365 - 30); // Expires in -30 to 335 days
         else if (docType === 'PUC') expiryDate = addDays(today, Math.random() * 180 - 60); // Expires in -60 to 120 days
+        else if (docType === 'AITP') expiryDate = addDays(today, Math.random() * 400 - 15); // Expires in -15 to 385 days
         
         const doc: VehicleDocument = {
           id: generateId(),
@@ -153,7 +155,7 @@ export async function addOrUpdateDocument(vehicleId: string, docData: Omit<Vehic
 // Alerts
 function generateAlertsForVehicle(vehicle: Vehicle) {
   // Remove existing alerts for this vehicle
-  alerts = alerts.filter(a => a.vehicleId !== vehicle.id);
+  alerts = alerts.filter(a => a.vehicleId !== vehicle.id && a.userId === MOCK_USER_ID);
 
   vehicle.documents.forEach(doc => {
     if (doc.status === 'ExpiringSoon' || doc.status === 'Overdue') {
@@ -168,25 +170,26 @@ function generateAlertsForVehicle(vehicle: Vehicle) {
           message: `${doc.type === 'Other' ? doc.customTypeName : doc.type} for ${vehicle.registrationNumber} is ${doc.status === 'ExpiringSoon' ? `expiring on ${doc.expiryDate}` : `overdue since ${doc.expiryDate}`}.`,
           createdAt: formatISO(new Date()),
           isRead: false,
-        });
+          userId: MOCK_USER_ID,
+        } as Alert);
       }
     }
   });
 }
 
 function generateAllAlerts() {
-  alerts = [];
+  alerts = alerts.filter(a => a.userId !== MOCK_USER_ID); // Clear existing user alerts before regenerating
   vehicles.forEach(generateAlertsForVehicle);
 }
 
 export async function getAlerts(): Promise<Alert[]> {
   initializeDummyData();
   generateAllAlerts(); // Re-evaluate alerts based on current dates
-  return JSON.parse(JSON.stringify(alerts.sort((a,b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime())));
+  return JSON.parse(JSON.stringify(alerts.filter(a => a.userId === MOCK_USER_ID).sort((a,b) => parseISO(b.createdAt).getTime() - parseISO(a.createdAt).getTime())));
 }
 
 export async function markAlertAsRead(alertId: string): Promise<boolean> {
-  const alert = alerts.find(a => a.id === alertId);
+  const alert = alerts.find(a => a.id === alertId && a.userId === MOCK_USER_ID);
   if (alert) {
     alert.isRead = true;
     return true;
@@ -201,14 +204,37 @@ export async function getSummaryStats(): Promise<SummaryStats> {
   let expiringSoonDocuments = 0;
   let overdueDocuments = 0;
 
+  let insuranceExpiringSoon = 0;
+  let insuranceOverdue = 0;
+  let fitnessExpiringSoon = 0;
+  let fitnessOverdue = 0;
+  let pucExpiringSoon = 0;
+  let pucOverdue = 0;
+  let aitpExpiringSoon = 0;
+  let aitpOverdue = 0;
+
   vehicles.forEach(vehicle => {
     let isVehicleCompliant = true;
     vehicle.documents.forEach(doc => {
-      // Re-calculate status based on current date
       const currentStatus = getDocumentComplianceStatus(doc.expiryDate);
+      
       if (currentStatus === 'ExpiringSoon') expiringSoonDocuments++;
       if (currentStatus === 'Overdue') overdueDocuments++;
       if (currentStatus === 'Overdue' || currentStatus === 'Missing') isVehicleCompliant = false;
+
+      if (doc.type === 'Insurance') {
+        if (currentStatus === 'ExpiringSoon') insuranceExpiringSoon++;
+        if (currentStatus === 'Overdue') insuranceOverdue++;
+      } else if (doc.type === 'Fitness') {
+        if (currentStatus === 'ExpiringSoon') fitnessExpiringSoon++;
+        if (currentStatus === 'Overdue') fitnessOverdue++;
+      } else if (doc.type === 'PUC') {
+        if (currentStatus === 'ExpiringSoon') pucExpiringSoon++;
+        if (currentStatus === 'Overdue') pucOverdue++;
+      } else if (doc.type === 'AITP') {
+        if (currentStatus === 'ExpiringSoon') aitpExpiringSoon++;
+        if (currentStatus === 'Overdue') aitpOverdue++;
+      }
     });
     if (isVehicleCompliant) compliantVehicles++;
   });
@@ -218,6 +244,14 @@ export async function getSummaryStats(): Promise<SummaryStats> {
     compliantVehicles,
     expiringSoonDocuments,
     overdueDocuments,
+    insuranceExpiringSoon,
+    insuranceOverdue,
+    fitnessExpiringSoon,
+    fitnessOverdue,
+    pucExpiringSoon,
+    pucOverdue,
+    aitpExpiringSoon,
+    aitpOverdue,
   };
 }
 
