@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -41,13 +40,16 @@ import { DOCUMENT_TYPES, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT } from '@/lib/
 import type { DocumentType, VehicleDocument } from '@/lib/types';
 import type { ExtractExpiryDateInput, ExtractExpiryDateOutput } from '@/ai/flows/extract-expiry-date';
 import { useToast } from '@/hooks/use-toast';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+
+const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
 const formSchema = z.object({
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]]),
   customTypeName: z.string().optional(),
   policyNumber: z.string().max(50, "Policy number too long").optional().nullable(),
   startDate: z.date().nullable(),
-  expiryDate: z.date().nullable(), 
+  expiryDate: z.date().nullable(),
   documentFile: z.instanceof(File).optional().nullable(),
 }).refine(data => {
   if (data.documentType === 'Other') {
@@ -64,7 +66,7 @@ const formSchema = z.object({
   return true;
 }, {
   message: "Start date cannot be after expiry date.",
-  path: ["startDate"], 
+  path: ["startDate"],
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -79,7 +81,9 @@ interface DocumentUploadModalProps {
       policyNumber?: string | null;
       startDate?: string | null; // ISO string
       expiryDate: string | null; // ISO string
-      documentFile?: File;
+      documentFile?: File; // For actual upload later
+      documentName?: string; // Filename
+      documentUrl?: string; // Mock URL
     },
     aiExtractedPolicyNumber?: string | null,
     aiPolicyNumberConfidence?: number | null,
@@ -105,13 +109,13 @@ export function DocumentUploadModal({
   const [isExtractingDate, setIsExtractingDate] = useState(false);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  
+
   const [aiExtractedPolicyNumber, setAiExtractedPolicyNumber] = useState<string | null>(null);
   const [aiPolicyNumberConfidence, setAiPolicyNumberConfidence] = useState<number | null>(null);
   const [aiExtractedStartDate, setAiExtractedStartDate] = useState<string | null>(null);
   const [aiStartDateConfidence, setAiStartDateConfidence] = useState<number | null>(null);
-  const [aiExtractedExpiryDate, setAiExtractedExpiryDate] = useState<string | null>(null); // Renamed from aiExtractedDate
-  const [aiExpiryDateConfidence, setAiExpiryDateConfidence] = useState<number | null>(null); // Renamed from aiConfidence
+  const [aiExtractedExpiryDate, setAiExtractedExpiryDate] = useState<string | null>(null);
+  const [aiExpiryDateConfidence, setAiExpiryDateConfidence] = useState<number | null>(null);
 
   const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
@@ -155,7 +159,7 @@ export function DocumentUploadModal({
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setFilePreview(URL.createObjectURL(file)); 
+      setFilePreview(URL.createObjectURL(file));
       form.setValue('documentFile', file);
       setAiError(null);
       // Reset AI fields on new file
@@ -165,7 +169,7 @@ export function DocumentUploadModal({
       setAiStartDateConfidence(null);
       setAiExtractedExpiryDate(null);
       setAiExpiryDateConfidence(null);
-      
+
       const currentDocType = form.getValues('documentType');
       if (AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocType)) {
         setIsExtractingDate(true);
@@ -178,7 +182,7 @@ export function DocumentUploadModal({
                 documentDataUri: dataUri,
                 documentType: currentDocType.toLowerCase() as 'insurance' | 'fitness' | 'puc',
               });
-              
+
               setAiExtractedPolicyNumber(result.policyNumber);
               setAiPolicyNumberConfidence(result.policyNumberConfidence);
               if (result.policyNumber) {
@@ -194,7 +198,7 @@ export function DocumentUploadModal({
               }
 
               setAiExtractedExpiryDate(result.expiryDate);
-              setAiExpiryDateConfidence(result.confidence); // 'confidence' from output is for expiryDate
+              setAiExpiryDateConfidence(result.confidence);
               if (result.expiryDate && isValid(parseISO(result.expiryDate))) {
                 form.setValue('expiryDate', parseISO(result.expiryDate));
                 toast({ title: "AI Extraction", description: `Suggested Expiry Date: ${format(parseISO(result.expiryDate), DATE_FORMAT)} (Conf: ${result.confidence?.toFixed(2) ?? 'N/A'})` });
@@ -224,7 +228,7 @@ export function DocumentUploadModal({
       }
     } else {
       setSelectedFile(null);
-      setFilePreview(null); 
+      setFilePreview(null);
       form.setValue('documentFile', null);
     }
   };
@@ -236,11 +240,14 @@ export function DocumentUploadModal({
         toast({ title: "File Required", description: "Please select a document file to upload.", variant: "destructive"});
         return;
     }
-    if (!values.expiryDate) { // Expiry date is crucial
+    if (!values.expiryDate) {
         toast({ title: "Expiry Date Required", description: "Please set an expiry date for the document.", variant: "destructive"});
         return;
     }
     setIsSubmitting(true);
+    const clientSideDocId = generateClientSideId();
+    const generatedDocumentUrl = `/uploads/mock/vehicle_${vehicleId}/doc_${clientSideDocId}/${selectedFile.name}`;
+
     await onSubmit(
       {
         documentType: values.documentType,
@@ -248,7 +255,9 @@ export function DocumentUploadModal({
         policyNumber: values.policyNumber,
         startDate: values.startDate ? format(values.startDate, 'yyyy-MM-dd') : null,
         expiryDate: values.expiryDate ? format(values.expiryDate, 'yyyy-MM-dd') : null,
-        documentFile: selectedFile || undefined,
+        documentFile: selectedFile,
+        documentName: selectedFile.name,
+        documentUrl: generatedDocumentUrl,
       },
       aiExtractedPolicyNumber,
       aiPolicyNumberConfidence,
@@ -281,15 +290,14 @@ export function DocumentUploadModal({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Document Type *</FormLabel>
-                  <Select 
+                  <Select
                     onValueChange={(value) => {
                       field.onChange(value);
-                      // Reset AI fields if type changes
                       setAiExtractedPolicyNumber(null); setAiPolicyNumberConfidence(null);
                       setAiExtractedStartDate(null); setAiStartDateConfidence(null);
                       setAiExtractedExpiryDate(null); setAiExpiryDateConfidence(null);
                       setAiError(null);
-                    }} 
+                    }}
                     defaultValue={field.value}
                   >
                     <FormControl>
@@ -325,17 +333,17 @@ export function DocumentUploadModal({
                 )}
               />
             )}
-            
+
             <FormField
               control={form.control}
               name="documentFile"
-              render={({ field }) => ( 
+              render={({ field }) => (
                 <FormItem>
                   <FormLabel>Document File *</FormLabel>
                   <FormControl>
-                    <Input 
-                      type="file" 
-                      accept=".pdf,.jpg,.jpeg,.png" 
+                    <Input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
                       onChange={handleFileChange}
                       className="text-sm"
                       required
@@ -345,7 +353,7 @@ export function DocumentUploadModal({
                 </FormItem>
               )}
             />
-            
+
             {filePreview && selectedFile && (
               <div className="text-sm text-muted-foreground">
                 Selected file: {selectedFile.name} ({ (selectedFile.size / 1024).toFixed(2) } KB)
@@ -364,7 +372,7 @@ export function DocumentUploadModal({
                 <span>{aiError}</span>
               </div>
             )}
-            
+
             {(!isExtractingDate && (aiExtractedPolicyNumber || aiExtractedStartDate || aiExtractedExpiryDate)) && (
                 <Card className="p-3 bg-muted/50">
                     <CardHeader className="p-0 pb-2">
@@ -398,7 +406,7 @@ export function DocumentUploadModal({
                 </FormItem>
               )}
             />
-            
+
             <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -454,8 +462,8 @@ export function DocumentUploadModal({
                 />
             </div>
              <FormDescription className="text-xs">
-                {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ? 
-                'AI may suggest details if a file is selected. Please verify or set manually.' : 
+                {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ?
+                'AI may suggest details if a file is selected. Please verify or set manually.' :
                 'Please enter details manually.'}
             </FormDescription>
 
@@ -475,3 +483,5 @@ export function DocumentUploadModal({
     </Dialog>
   );
 }
+
+    

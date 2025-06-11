@@ -1,5 +1,4 @@
 
-
 "use client";
 import { notFound, useRouter } from 'next/navigation';
 import { getVehicleById, getDocumentComplianceStatus, addOrUpdateDocument } from '@/lib/data';
@@ -26,10 +25,10 @@ type VehicleDetailPageProps = {
 };
 
 export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailPageProps) {
-  const resolvedParams = typeof (paramsProp as Promise<{id: string}>)?.then === 'function' 
-    ? use(paramsProp as Promise<{id: string}>) 
+  const resolvedParams = typeof (paramsProp as Promise<{id: string}>)?.then === 'function'
+    ? use(paramsProp as Promise<{id: string}>)
     : paramsProp as {id: string};
-  
+
   const { id: vehicleId } = resolvedParams;
 
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
@@ -70,7 +69,7 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
   };
 
   const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType }) => {
-    setEditingDocumentContext(docContext || { type: 'Insurance' }); 
+    setEditingDocumentContext(docContext || { type: 'Insurance' });
     setIsModalOpen(true);
   };
 
@@ -82,6 +81,8 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
       startDate?: string | null;
       expiryDate: string | null;
       documentFile?: File;
+      documentName?: string; // Added
+      documentUrl?: string;  // Added
     },
     aiExtractedPolicyNumber?: string | null,
     aiPolicyNumberConfidence?: number | null,
@@ -98,23 +99,24 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
         policyNumber: data.policyNumber,
         startDate: data.startDate,
         expiryDate: data.expiryDate,
-        documentName: data.documentFile?.name,
+        documentName: data.documentName, // Pass through
+        documentUrl: data.documentUrl,   // Pass through
         aiExtractedPolicyNumber,
         aiPolicyNumberConfidence,
         aiExtractedStartDate,
         aiStartDateConfidence,
-        aiExtractedDate: aiExtractedExpiryDate, // Corresponds to 'expiryDate'
-        aiConfidence: aiExpiryDateConfidence,   // Corresponds to 'expiryDate'
+        aiExtractedDate: aiExtractedExpiryDate,
+        aiConfidence: aiExpiryDateConfidence,
       });
       if (updatedVehicle) {
-        setVehicle(updatedVehicle); 
+        setVehicle(updatedVehicle);
         toast({ title: 'Success', description: `Document for ${data.documentType} added successfully.` });
       } else {
         throw new Error('Failed to update vehicle from server');
       }
       setIsModalOpen(false);
       setEditingDocumentContext(null);
-      router.refresh(); 
+      router.refresh();
     } catch (error) {
       console.error('Failed to submit document:', error);
       toast({ title: 'Error', description: 'Failed to save document. Please try again.', variant: 'destructive' });
@@ -192,17 +194,17 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[18%]">Policy/Doc #</TableHead>
-                        <TableHead className="w-[20%]">Validity Period</TableHead>
-                        <TableHead className="w-[15%]">Status</TableHead>
-                        <TableHead className="w-[12%]">Uploaded</TableHead>
-                        <TableHead className="w-[20%]">AI Extracted Info</TableHead>
-                        <TableHead className="text-right w-[15%]">Actions</TableHead>
+                        <TableHead className="w-[15%]">Policy/Doc #</TableHead>
+                        <TableHead className="w-[15%]">Validity Period</TableHead>
+                        <TableHead className="w-[12%]">Status</TableHead>
+                        <TableHead className="w-[15%]">File Name / Uploaded</TableHead>
+                        <TableHead className="w-[10%]">AI Info</TableHead>
+                        <TableHead className="text-right w-[13%]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {docs.map((doc) => {
-                        const status = getDocumentComplianceStatus(doc.expiryDate); 
+                        const status = getDocumentComplianceStatus(doc.expiryDate);
                         const config = getStatusConfig(status);
                         const StatusIcon = config.icon;
                         const hasAiInfo = doc.aiExtractedPolicyNumber || doc.aiExtractedStartDate || doc.aiExtractedDate;
@@ -227,8 +229,19 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                               </Badge>
                             </TableCell>
                             <TableCell className="text-xs">
-                                {format(parseISO(doc.uploadedAt), `${DATE_FORMAT}`)}
-                                {doc.documentName && <p className="text-muted-foreground truncate max-w-[100px] text-[10px]">{doc.documentName}</p>}
+                                {doc.documentName ? (
+                                     <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <span className="truncate block max-w-[120px] hover:underline">{doc.documentName}</span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" align="start"><p>{doc.documentName}</p></TooltipContent>
+                                     </Tooltip>
+                                ) : (
+                                    <span className="text-muted-foreground italic">No file name</span>
+                                )}
+                                <p className="text-muted-foreground text-[10px]">
+                                    {format(parseISO(doc.uploadedAt), `${DATE_FORMAT} HH:mm`)}
+                                </p>
                             </TableCell>
                             <TableCell className="text-xs">
                                 {hasAiInfo ? (
@@ -251,10 +264,12 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
                               <Button variant="outline" size="sm" className="mr-2 text-xs h-7" onClick={() => handleOpenUploadModal({ type: doc.type, customTypeName: doc.customTypeName })}>
                                  <UploadCloud className="mr-1 h-3 w-3" /> Add New
                               </Button>
-                              {doc.documentUrl && (
+                              {doc.documentUrl ? (
                                 <Button variant="link" size="sm" asChild className="text-xs p-0 h-7">
                                   <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer">View Doc</a>
                                 </Button>
+                              ) : (
+                                <Button variant="link" size="sm" className="text-xs p-0 h-7 text-muted-foreground" disabled>No File</Button>
                               )}
                             </TableCell>
                           </TableRow>
@@ -290,3 +305,4 @@ export default function VehicleDetailPage({ params: paramsProp }: VehicleDetailP
   );
 }
 
+    
