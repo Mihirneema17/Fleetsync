@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -17,6 +18,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'; // Assuming this is the path to your sidebar components
 import { Button } from '@/components/ui/button';
+import { SheetTitle } from '@/components/ui/sheet'; // Added import for SheetTitle
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
@@ -29,7 +31,7 @@ const navItems = [
 
 export function SidebarNav() {
   const pathname = usePathname();
-  const { state: sidebarState } = useSidebar(); // Get sidebar state if needed for responsive text/icons
+  const { state: sidebarState, isMobile } = useSidebar(); // Get sidebar state and isMobile
 
   // Placeholder for fetching alert count
   const unreadAlertsCount = 0; // Replace with actual data fetching
@@ -39,8 +41,12 @@ export function SidebarNav() {
       <SidebarHeader className="p-4">
         <Link href="/" className="flex items-center gap-2">
           <Home className="h-8 w-8 text-primary" />
-          {sidebarState === 'expanded' && (
-            <h1 className="text-xl font-bold font-headline text-primary">FleetSync</h1>
+          {isMobile ? (
+            <SheetTitle className="text-xl font-bold font-headline text-primary">FleetSync</SheetTitle>
+          ) : (
+            sidebarState === 'expanded' && (
+              <h1 className="text-xl font-bold font-headline text-primary">FleetSync</h1>
+            )
           )}
         </Link>
       </SidebarHeader>
