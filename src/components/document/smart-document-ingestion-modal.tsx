@@ -141,8 +141,8 @@ export function SmartDocumentIngestionModal({
     // form.reset(); // Reset form when new file is selected - handled by useEffect now
 
     if (file) {
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
-        setProcessingError("File is too large. Maximum size is 5MB.");
+      if (file.size > 10 * 1024 * 1024) { // 10MB limit
+        setProcessingError("File is too large. Maximum size is 10MB.");
         setSelectedFile(null);
         return;
       }
@@ -281,7 +281,7 @@ export function SmartDocumentIngestionModal({
         <DialogHeader>
           <DialogTitle className="font-headline">Smart Document Upload & Review</DialogTitle>
           <DialogDescription>
-            Upload a document. AI will attempt to extract details. Review and correct before saving. Max 5MB. (PDF, JPG, PNG, WEBP)
+            Upload a document. AI will attempt to extract details. Review and correct before saving. Max 10MB. (PDF, JPG, PNG, WEBP)
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[70vh] p-1">
