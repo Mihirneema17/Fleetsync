@@ -16,8 +16,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { format, parseISO, isValid } from 'date-fns';
 import { cn } from '@/lib/utils';
-import { ClipboardList, AlertTriangle, Clock, CheckCircle2, Search, FilterX, Car, Download, CalendarIcon, ArrowUpDown, Loader2 } from 'lucide-react';
-import { DOCUMENT_TYPES, DATE_FORMAT } from '@/lib/constants';
+import { ClipboardList, AlertTriangle, Clock, CheckCircle2, Search, FilterX, Car, Download, CalendarIcon, ArrowUpDown, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
+import { DOCUMENT_TYPES, DATE_FORMAT, EXPIRY_WARNING_DAYS } from '@/lib/constants';
 import type { DateRange } from "react-day-picker";
 import { useToast } from '@/hooks/use-toast';
 
@@ -329,6 +329,7 @@ export default function ExpiringDocumentsReportPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={config.badgeVariant} className={cn(
+                           "text-xs",
                            doc.status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
                            doc.status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
                         )}>
@@ -336,7 +337,7 @@ export default function ExpiringDocumentsReportPage() {
                           {doc.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className={cn("text-right", {
+                      <TableCell className={cn("text-right text-xs", {
                         'text-red-600 font-semibold': doc.daysDifference < 0 && doc.expiryDate,
                         'text-yellow-600 font-semibold': doc.expiryDate && doc.daysDifference >= 0 && doc.daysDifference <= EXPIRY_WARNING_DAYS,
                       })}>
