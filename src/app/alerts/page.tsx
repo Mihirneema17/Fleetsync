@@ -1,3 +1,4 @@
+
 import { getAlerts, markAlertAsRead } from '@/lib/data';
 import type { Alert as AlertType } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,13 +8,13 @@ import { BellRing, Check, ShieldAlert, X } from 'lucide-react';
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
+import { revalidatePath } from 'next/cache';
 
 // Server Action to mark an alert as read
 async function markReadAction(alertId: string) {
   'use server';
   await markAlertAsRead(alertId);
-  // Revalidate path or use router.refresh() on client if needed, but for now direct state update isn't feasible here.
-  // This page will re-fetch on next load. For instant UI update, client-side mutation would be needed.
+  revalidatePath('/alerts'); // Revalidate the alerts page to reflect changes
 }
 
 export default async function AlertsPage() {
@@ -62,7 +63,7 @@ export default async function AlertsPage() {
                         </span>
                       </AlertDescription>
                     </div>
-                    <form action={async () => { await markReadAction(alert.id); }} className="ml-auto">
+                    <form action={markReadAction.bind(null, alert.id)} className="ml-auto">
                        <Button type="submit" variant="ghost" size="sm">
                           <Check className="mr-1 h-4 w-4" /> Mark as Read
                        </Button>
