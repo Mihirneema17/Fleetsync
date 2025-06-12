@@ -27,13 +27,12 @@ const generateId = () => doc(collection(db, '_')).id; // Generate Firestore comp
 async function internalLogAuditEvent(
   action: AuditLogAction,
   entityType: AuditLogEntry['entityType'],
-  entityId?: string,
+  entityId?: string | null, // Allow null
   details: Record<string, any> = {},
-  entityRegistration?: string
+  entityRegistration?: string | null // Allow null
 ) {
   try {
     const newAuditLogId = generateId();
-    // Ensure details object is cleaned of undefined values or stringify/parse to handle complex objects
     const cleanedDetails = JSON.parse(JSON.stringify(details, (key, value) => {
       if (value instanceof Date) {
         return value.toISOString();
@@ -65,7 +64,7 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
     return;
   }
   logger.info(`Starting alert generation for vehicle ${vehicle.id}`);
-  try {
+  try { // Wrap entire function for resilience
     const alertsColRef = collection(db, "alerts");
 
     const existingUnreadAlertsQuery = query(alertsColRef,
@@ -107,64 +106,72 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
 
       const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeNameForLookup);
 
-      if (latestDoc && latestDoc.expiryDate) {
+      if (latestDoc && latestDoc.expiryDate) { // Ensure expiryDate exists
         const currentStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
         if (currentStatus === 'ExpiringSoon' || currentStatus === 'Overdue') {
           const newAlertId = generateId();
-          const alertMessage = `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate!), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate!), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`;
-          const newAlertData = {
-            id: newAlertId,
+          const alertMessage = `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`;
+          const newAlertData: Omit<Alert, 'id' | 'createdAt' | 'dueDate'> & { createdAt: Timestamp, dueDate: string } = { // Ensure types match Firestore
             vehicleId: vehicle.id,
             vehicleRegistration: vehicle.registrationNumber,
             documentType: latestDoc.type,
-            customDocumentTypeName: latestDoc.customTypeName,
-            policyNumber: latestDoc.policyNumber,
-            dueDate: latestDoc.expiryDate,
+            customDocumentTypeName: latestDoc.customDocumentTypeName || null, // Ensure null
+            policyNumber: latestDoc.policyNumber || null, // Ensure null
+            dueDate: latestDoc.expiryDate, // Already a string
             message: alertMessage,
             createdAt: Timestamp.now(),
             isRead: false,
             userId: MOCK_USER_ID,
           };
-          await addDoc(alertsColRef, newAlertData);
+          // Create a new document reference with the generated ID for the add operation.
+          const alertDocRef = doc(collection(db, 'alerts'), newAlertId);
+          await addDoc(alertsColRef, { id: newAlertId, ...newAlertData }); // Add id explicitly
           logger.info(`Generated ${currentStatus} alert for vehicle ${vehicle.id}, doc type ${typeKey}`, { alertId: newAlertId });
         }
       }
     }
     logger.info(`Finished alert generation for vehicle ${vehicle.id}`);
   } catch (error) {
-    logger.error(`Error during alert generation for vehicle ${vehicle.id}:`, error);
+    logger.error(`Critical error during alert generation for vehicle ${vehicle.id}:`, error);
+    // Do not re-throw, allow main operation to continue
   }
 }
 
 export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
+  logger.info(`[DATA] getAlerts called. onlyUnread: ${onlyUnread}`);
   try {
     const alertsColRef = collection(db, "alerts");
     const queryConstraints: QueryConstraint[] = [
-      where('userId', '==', MOCK_USER_ID),
+      where('userId', '==', MOCK_USER_ID), // Ensure this filter is effective
       orderBy('createdAt', 'desc')
     ];
 
     if (onlyUnread) {
-      // Add 'isRead' filter. It's generally better to add filters that reduce the dataset first,
-      // but Firestore query order for where() clauses doesn't strictly matter for performance
-      // as much as index compatibility. orderBy usually comes after filters.
       queryConstraints.unshift(where('isRead', '==', false));
     }
 
     const q = query(alertsColRef, ...queryConstraints);
     const alertSnapshot = await getDocs(q);
+    logger.info(`[DATA] getAlerts fetched ${alertSnapshot.docs.length} alerts.`);
 
     return alertSnapshot.docs.map(docSnap => {
       const data = docSnap.data();
       return {
         id: docSnap.id,
-        ...data,
-        createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : data.createdAt,
+        vehicleId: data.vehicleId || '',
+        vehicleRegistration: data.vehicleRegistration || '',
+        documentType: data.documentType || 'Other',
+        customDocumentTypeName: data.customDocumentTypeName || undefined,
         dueDate: data.dueDate, // Assuming dueDate is already a string
+        message: data.message || '',
+        createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : new Date(0).toISOString(),
+        isRead: data.isRead || false,
+        userId: data.userId || MOCK_USER_ID,
+        policyNumber: data.policyNumber || null,
       } as Alert;
     });
   } catch (error) {
-    logger.error('Error fetching alerts from Firestore:', error);
+    logger.error('[DATA] Error fetching alerts from Firestore:', error);
     return []; // Return empty array on error
   }
 }
@@ -191,64 +198,102 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
 
 export async function getVehicles(): Promise<Vehicle[]> {
   logger.debug('Fetching all vehicles...');
-  const vehiclesCol = collection(db, 'vehicles');
-  const vehicleSnapshot = await getDocs(query(vehiclesCol, orderBy('registrationNumber')));
-  const vehicleList = vehicleSnapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : data.createdAt,
-      updatedAt: (data.updatedAt as Timestamp)?.toDate ? formatISO((data.updatedAt as Timestamp).toDate()) : data.updatedAt,
-      documents: (data.documents || []).map((doc: any) => ({
-        ...doc,
-        startDate: doc.startDate,
-        expiryDate: doc.expiryDate,
-        uploadedAt: doc.uploadedAt,
-        aiExtractedDate: doc.aiExtractedDate,
-        aiExtractedStartDate: doc.aiExtractedStartDate,
-      })),
-    } as Vehicle;
-  });
-  logger.info(`Fetched ${vehicleList.length} vehicles.`);
-  return vehicleList;
+  try {
+    const vehiclesCol = collection(db, 'vehicles');
+    const vehicleSnapshot = await getDocs(query(vehiclesCol, orderBy('registrationNumber')));
+    const vehicleList = vehicleSnapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        registrationNumber: data.registrationNumber || '',
+        type: data.type || 'Unknown',
+        make: data.make || 'Unknown',
+        model: data.model || 'Unknown',
+        createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : new Date(0).toISOString(),
+        updatedAt: (data.updatedAt as Timestamp)?.toDate ? formatISO((data.updatedAt as Timestamp).toDate()) : new Date(0).toISOString(),
+        documents: (data.documents || []).map((doc: any) => ({
+          id: doc.id || generateId(),
+          vehicleId: doc.vehicleId || docSnap.id,
+          type: doc.type || 'Other',
+          customTypeName: doc.customTypeName || null,
+          policyNumber: doc.policyNumber || null,
+          startDate: doc.startDate || null,
+          expiryDate: doc.expiryDate || null,
+          status: doc.status || 'Missing',
+          uploadedAt: doc.uploadedAt || new Date(0).toISOString(),
+          documentName: doc.documentName || null,
+          documentUrl: doc.documentUrl || null,
+          aiExtractedPolicyNumber: doc.aiExtractedPolicyNumber || null,
+          aiPolicyNumberConfidence: doc.aiPolicyNumberConfidence || null,
+          aiExtractedStartDate: doc.aiExtractedStartDate || null,
+          aiStartDateConfidence: doc.aiStartDateConfidence || null,
+          aiExtractedDate: doc.aiExtractedDate || null,
+          aiConfidence: doc.aiConfidence || null,
+        })),
+      } as Vehicle;
+    });
+    logger.info(`Fetched ${vehicleList.length} vehicles.`);
+    return vehicleList;
+  } catch (error) {
+    logger.error('Error fetching vehicles:', error);
+    return [];
+  }
 }
 
 export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
   logger.debug(`Fetching vehicle by ID: ${id}`);
-  const vehicleRef = doc(db, 'vehicles', id);
-  const vehicleSnap = await getDoc(vehicleRef);
-  if (vehicleSnap.exists()) {
-    const data = vehicleSnap.data();
-    const vehicleData = {
-      id: vehicleSnap.id,
-      ...data,
-      createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : data.createdAt,
-      updatedAt: (data.updatedAt as Timestamp)?.toDate ? formatISO((data.updatedAt as Timestamp).toDate()) : data.updatedAt,
-      documents: (data.documents || []).map((doc: any) => ({
-        ...doc,
-        startDate: doc.startDate,
-        expiryDate: doc.expiryDate,
-        uploadedAt: doc.uploadedAt,
-        aiExtractedDate: doc.aiExtractedDate,
-        aiExtractedStartDate: doc.aiExtractedStartDate,
-      })).sort((a: VehicleDocument, b: VehicleDocument) => {
-        if (a.type < b.type) return -1;
-        if (a.type > b.type) return 1;
-        if (a.type === 'Other' && b.type === 'Other') {
-            const nameA = a.customTypeName || '';
-            const nameB = b.customTypeName || '';
-            if (nameA < nameB) return -1;
-            if (nameA > nameB) return 1;
-        }
-        return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
-      }),
-    } as Vehicle;
-    logger.info(`Vehicle ${id} fetched successfully.`);
-    return vehicleData;
+  try {
+    const vehicleRef = doc(db, 'vehicles', id);
+    const vehicleSnap = await getDoc(vehicleRef);
+    if (vehicleSnap.exists()) {
+      const data = vehicleSnap.data();
+      const vehicleData = {
+        id: vehicleSnap.id,
+        registrationNumber: data.registrationNumber || '',
+        type: data.type || 'Unknown',
+        make: data.make || 'Unknown',
+        model: data.model || 'Unknown',
+        createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : new Date(0).toISOString(),
+        updatedAt: (data.updatedAt as Timestamp)?.toDate ? formatISO((data.updatedAt as Timestamp).toDate()) : new Date(0).toISOString(),
+        documents: (data.documents || []).map((doc: any) => ({
+          id: doc.id || generateId(),
+          vehicleId: doc.vehicleId || vehicleSnap.id,
+          type: doc.type || 'Other',
+          customTypeName: doc.customTypeName || null,
+          policyNumber: doc.policyNumber || null,
+          startDate: doc.startDate || null,
+          expiryDate: doc.expiryDate || null,
+          status: doc.status || 'Missing',
+          uploadedAt: doc.uploadedAt || new Date(0).toISOString(),
+          documentName: doc.documentName || null,
+          documentUrl: doc.documentUrl || null,
+          aiExtractedPolicyNumber: doc.aiExtractedPolicyNumber || null,
+          aiPolicyNumberConfidence: doc.aiPolicyNumberConfidence || null,
+          aiExtractedStartDate: doc.aiExtractedStartDate || null,
+          aiStartDateConfidence: doc.aiStartDateConfidence || null,
+          aiExtractedDate: doc.aiExtractedDate || null,
+          aiConfidence: doc.aiConfidence || null,
+        })).sort((a: VehicleDocument, b: VehicleDocument) => {
+          if (a.type < b.type) return -1;
+          if (a.type > b.type) return 1;
+          if (a.type === 'Other' && b.type === 'Other') {
+              const nameA = a.customTypeName || '';
+              const nameB = b.customTypeName || '';
+              if (nameA < nameB) return -1;
+              if (nameA > nameB) return 1;
+          }
+          return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
+        }),
+      } as Vehicle;
+      logger.info(`Vehicle ${id} fetched successfully.`);
+      return vehicleData;
+    }
+    logger.warn(`Vehicle with ID ${id} not found.`);
+    return undefined;
+  } catch (error) {
+    logger.error(`Error fetching vehicle by ID ${id}:`, error);
+    return undefined;
   }
-  logger.warn(`Vehicle with ID ${id} not found.`);
-  return undefined;
 }
 
 export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>): Promise<Vehicle> {
@@ -256,122 +301,142 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const now = Timestamp.now();
   const nowISO = formatISO(now.toDate());
 
-  const initialDocuments: VehicleDocument[] = [];
-  DOCUMENT_TYPES.forEach(docType => {
-    if (docType !== 'Other') {
-      initialDocuments.push({
-        id: generateId(),
-        vehicleId: '', // This will be updated after vehicle creation
-        type: docType,
-        customTypeName: null,
-        policyNumber: null,
-        startDate: null,
-        expiryDate: null,
-        status: 'Missing',
-        uploadedAt: nowISO,
-        documentName: null,
-        documentUrl: null,
-        aiExtractedDate: null,
-        aiConfidence: null,
-        aiExtractedPolicyNumber: null,
-        aiPolicyNumberConfidence: null,
-        aiExtractedStartDate: null,
-        aiStartDateConfidence: null,
-      });
-    }
-  });
+  try {
+    const initialDocuments: VehicleDocument[] = [];
+    DOCUMENT_TYPES.forEach(docType => {
+      if (docType !== 'Other') { // Only create placeholders for non-'Other' types
+        initialDocuments.push({
+          id: generateId(),
+          vehicleId: '', // Will be updated
+          type: docType,
+          customTypeName: null, // Explicitly null
+          policyNumber: null,   // Explicitly null
+          startDate: null,      // Explicitly null
+          expiryDate: null,     // Explicitly null
+          status: 'Missing',
+          uploadedAt: nowISO,
+          documentName: null,   // Explicitly null
+          documentUrl: null,    // Explicitly null
+          // AI fields explicitly null
+          aiExtractedPolicyNumber: null,
+          aiPolicyNumberConfidence: null,
+          aiExtractedStartDate: null,
+          aiStartDateConfidence: null,
+          aiExtractedDate: null,
+          aiConfidence: null,
+        });
+      }
+    });
 
-  const newVehicleDataToStore = {
-    ...vehicleData,
-    documents: initialDocuments,
-    createdAt: now,
-    updatedAt: now,
-  };
+    const newVehicleDataToStore = {
+      ...vehicleData,
+      documents: initialDocuments, // These initially have empty vehicleId
+      createdAt: now,
+      updatedAt: now,
+    };
 
-  const docRef = await addDoc(collection(db, 'vehicles'), newVehicleDataToStore);
-  logger.info(`Vehicle added successfully with ID: ${docRef.id}`);
+    const docRef = await addDoc(collection(db, 'vehicles'), newVehicleDataToStore);
+    logger.info(`Vehicle added successfully with ID: ${docRef.id}`);
 
-  const finalInitialDocuments = initialDocuments.map(d => ({...d, vehicleId: docRef.id}));
-  await updateDoc(docRef, { documents: finalInitialDocuments });
+    const finalInitialDocuments = initialDocuments.map(d => ({...d, vehicleId: docRef.id}));
+    await updateDoc(docRef, { documents: finalInitialDocuments });
+    logger.info(`Initial documents updated with vehicleId for ${docRef.id}`);
 
+    const newVehicleForReturn: Vehicle = {
+      ...vehicleData,
+      id: docRef.id,
+      documents: finalInitialDocuments,
+      createdAt: nowISO,
+      updatedAt: nowISO,
+    };
 
-  const newVehicleForReturn: Vehicle = {
-    ...vehicleData,
-    id: docRef.id,
-    documents: finalInitialDocuments,
-    createdAt: nowISO,
-    updatedAt: nowISO,
-  };
+    internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
 
-  internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
+    generateAlertsForVehicle(newVehicleForReturn)
+      .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id}`))
+      .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
 
-  generateAlertsForVehicle(newVehicleForReturn)
-    .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id}`))
-    .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
-
-  return newVehicleForReturn;
+    return newVehicleForReturn;
+  } catch (error) {
+    logger.error('Error during addVehicle core logic:', error, { vehicleData });
+    throw error; // Re-throw so the Server Action catches it
+  }
 }
 
 export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>>): Promise<Vehicle | undefined> {
   logger.info(`Updating vehicle ${id}:`, updates);
-  const vehicleRef = doc(db, 'vehicles', id);
-  const vehicleSnap = await getDoc(vehicleRef);
-  if (!vehicleSnap.exists()) {
-    logger.warn(`Update failed: Vehicle ${id} not found.`);
-    return undefined;
-  }
+  try {
+    const vehicleRef = doc(db, 'vehicles', id);
+    const vehicleSnap = await getDoc(vehicleRef);
+    if (!vehicleSnap.exists()) {
+      logger.warn(`Update failed: Vehicle ${id} not found.`);
+      return undefined;
+    }
 
-  const oldVehicleData = vehicleSnap.data() as Omit<Vehicle, 'id'>;
-  const updatedDataToStore = { ...updates, updatedAt: Timestamp.now() };
-  await updateDoc(vehicleRef, updatedDataToStore);
-  logger.info(`Vehicle ${id} updated successfully.`);
+    const oldVehicleData = vehicleSnap.data() as Omit<Vehicle, 'id'>; // Assuming Vehicle type structure
+    const updatedDataToStore = { ...updates, updatedAt: Timestamp.now() };
+    await updateDoc(vehicleRef, updatedDataToStore);
+    logger.info(`Vehicle ${id} updated successfully.`);
 
-  const changedFields: Record<string, any> = {};
-  for (const key in updates) {
-    if (Object.prototype.hasOwnProperty.call(updates, key)) {
-      const typedKey = key as keyof typeof updates;
-      if (updates[typedKey] !== oldVehicleData[typedKey]) {
-        changedFields[typedKey] = { old: oldVehicleData[typedKey], new: updates[typedKey] };
+    const changedFields: Record<string, any> = {};
+    for (const key in updates) {
+      if (Object.prototype.hasOwnProperty.call(updates, key)) {
+        const typedKey = key as keyof typeof updates;
+        const oldValue = oldVehicleData[typedKey] !== undefined ? oldVehicleData[typedKey] : null;
+        const newValue = updates[typedKey] !== undefined ? updates[typedKey] : null;
+        if (newValue !== oldValue) {
+          changedFields[typedKey] = { old: oldValue, new: newValue };
+        }
       }
     }
-  }
-  if (Object.keys(changedFields).length > 0) {
-    internalLogAuditEvent('UPDATE_VEHICLE', 'VEHICLE', id, { updates: changedFields }, (oldVehicleData as Vehicle).registrationNumber);
-  }
 
-  const updatedVehicle = await getVehicleById(id);
-  if (updatedVehicle) {
-    generateAlertsForVehicle(updatedVehicle)
-      .then(() => logger.info(`Background alert generation initiated for updated vehicle ${updatedVehicle.id}`))
-      .catch(err => logger.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id}:`, err));
+    if (Object.keys(changedFields).length > 0) {
+      const currentRegNumber = updates.registrationNumber || (oldVehicleData as Vehicle).registrationNumber;
+      internalLogAuditEvent('UPDATE_VEHICLE', 'VEHICLE', id, { updates: changedFields }, currentRegNumber);
+    }
+
+    const updatedVehicle = await getVehicleById(id);
+    if (updatedVehicle) {
+      generateAlertsForVehicle(updatedVehicle)
+        .then(() => logger.info(`Background alert generation initiated for updated vehicle ${updatedVehicle.id}`))
+        .catch(err => logger.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id}:`, err));
+    }
+    return updatedVehicle;
+  } catch (error) {
+    logger.error(`Error updating vehicle ${id}:`, error, { updates });
+    return undefined; // Or re-throw if the caller should handle it
   }
-  return updatedVehicle;
 }
 
 export async function deleteVehicle(id: string): Promise<boolean> {
   logger.info(`Attempting to delete vehicle ${id}`);
-  const vehicleRef = doc(db, 'vehicles', id);
-  const vehicleSnap = await getDoc(vehicleRef);
-  if (!vehicleSnap.exists()) {
-    logger.warn(`Delete failed: Vehicle ${id} not found.`);
+  try {
+    const vehicleRef = doc(db, 'vehicles', id);
+    const vehicleSnap = await getDoc(vehicleRef);
+    if (!vehicleSnap.exists()) {
+      logger.warn(`Delete failed: Vehicle ${id} not found.`);
+      return false;
+    }
+
+    const vehicleToDeleteData = vehicleSnap.data() as Vehicle;
+
+    await deleteDoc(vehicleRef);
+    logger.info(`Vehicle ${id} deleted from 'vehicles' collection.`);
+
+    const alertsCol = collection(db, 'alerts');
+    const q = query(alertsCol, where('vehicleId', '==', id));
+    const alertSnapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    alertSnapshot.docs.forEach(docSnap => batch.delete(docSnap.ref));
+    await batch.commit();
+    logger.info(`Deleted ${alertSnapshot.size} alerts associated with vehicle ${id}.`);
+
+    internalLogAuditEvent('DELETE_VEHICLE', 'VEHICLE', id, { registrationNumber: vehicleToDeleteData.registrationNumber }, vehicleToDeleteData.registrationNumber);
+    return true;
+  } catch (error) {
+    logger.error(`Error deleting vehicle ${id}:`, error);
     return false;
   }
-
-  const vehicleToDeleteData = vehicleSnap.data() as Vehicle;
-
-  await deleteDoc(vehicleRef);
-  logger.info(`Vehicle ${id} deleted from 'vehicles' collection.`);
-
-  const alertsCol = collection(db, 'alerts');
-  const q = query(alertsCol, where('vehicleId', '==', id));
-  const alertSnapshot = await getDocs(q);
-  const batch = writeBatch(db);
-  alertSnapshot.docs.forEach(docSnap => batch.delete(docSnap.ref));
-  await batch.commit();
-  logger.info(`Deleted ${alertSnapshot.size} alerts associated with vehicle ${id}.`);
-
-  internalLogAuditEvent('DELETE_VEHICLE', 'VEHICLE', id, { registrationNumber: vehicleToDeleteData.registrationNumber }, vehicleToDeleteData.registrationNumber);
-  return true;
 }
 
 export async function addOrUpdateDocument(
@@ -381,176 +446,220 @@ export async function addOrUpdateDocument(
     customTypeName?: string | null;
     policyNumber?: string | null;
     startDate?: string | null;
-    expiryDate: string | null;
+    expiryDate: string | null; // Should always be string here
     documentName?: string | null;
     documentUrl?: string | null;
     aiExtractedPolicyNumber?: string | null;
     aiPolicyNumberConfidence?: number | null;
     aiExtractedStartDate?: string | null;
     aiStartDateConfidence?: number | null;
-    aiExtractedDate?: string | null;
-    aiConfidence?: number | null;
+    aiExtractedDate?: string | null; // This is for expiryDate
+    aiConfidence?: number | null;   // This is for expiryDateConfidence
   }
 ): Promise<Vehicle | undefined> {
   logger.info(`Adding/updating document for vehicle ${vehicleId}:`, { type: docData.type, name: docData.documentName });
-  const vehicleRef = doc(db, 'vehicles', vehicleId);
-  const vehicleSnap = await getDoc(vehicleRef);
-  if (!vehicleSnap.exists()) {
-    logger.error(`Vehicle not found for adding document: ${vehicleId}`);
+  try {
+    const vehicleRef = doc(db, 'vehicles', vehicleId);
+    const vehicleSnap = await getDoc(vehicleRef);
+    if (!vehicleSnap.exists()) {
+      logger.error(`Vehicle not found for adding document: ${vehicleId}`);
+      return undefined;
+    }
+
+    const vehicle = { id: vehicleSnap.id, ...vehicleSnap.data() } as Vehicle;
+    let documents = vehicle.documents || [];
+    const newDocId = generateId();
+    // expiryDate from docData is already a string | null, but form validation should ensure it's not null here
+    const status = getDocumentComplianceStatus(docData.expiryDate as string);
+    const uploadedAtISO = formatISO(new Date());
+
+    const newDocument: VehicleDocument = {
+      id: newDocId,
+      vehicleId: vehicleId,
+      type: docData.type,
+      customTypeName: docData.type === 'Other' ? (docData.customTypeName || null) : null,
+      policyNumber: docData.policyNumber || null,
+      startDate: docData.startDate || null,
+      expiryDate: docData.expiryDate as string, // Cast as string, form ensures it's present
+      documentUrl: docData.documentUrl || null,
+      documentName: docData.documentName || null,
+      status,
+      uploadedAt: uploadedAtISO,
+      aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber || null,
+      aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence === undefined ? null : docData.aiPolicyNumberConfidence,
+      aiExtractedStartDate: docData.aiExtractedStartDate || null,
+      aiStartDateConfidence: docData.aiStartDateConfidence === undefined ? null : docData.aiStartDateConfidence,
+      aiExtractedDate: docData.aiExtractedDate || null,
+      aiConfidence: docData.aiConfidence === undefined ? null : docData.aiConfidence,
+    };
+    
+    // Remove placeholder "Missing" document if this new document is for the same type
+    if (newDocument.expiryDate) {
+        documents = documents.filter(d =>
+            !(d.type === newDocument.type &&
+             (d.type !== 'Other' || d.customTypeName === newDocument.customTypeName) &&
+             d.status === 'Missing' && !d.expiryDate)
+        );
+    }
+    documents.push(newDocument);
+
+    documents.sort((a, b) => {
+      if (a.type < b.type) return -1;
+      if (a.type > b.type) return 1;
+      if (a.type === 'Other' && b.type === 'Other') {
+          const nameA = a.customTypeName || '';
+          const nameB = b.customTypeName || '';
+          if (nameA < nameB) return -1;
+          if (nameA > nameB) return 1;
+      }
+      return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
+    });
+
+    await updateDoc(vehicleRef, {
+      documents: documents,
+      updatedAt: Timestamp.now(),
+    });
+    logger.info(`Document ${newDocId} added to vehicle ${vehicleId}.`);
+
+    internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', newDocId, {
+        vehicleId: vehicleId,
+        documentType: newDocument.type,
+        customTypeName: newDocument.customTypeName,
+        policyNumber: newDocument.policyNumber,
+        expiryDate: newDocument.expiryDate,
+        fileName: newDocument.documentName,
+        aiPolicy: newDocument.aiExtractedPolicyNumber, aiPolicyConf: newDocument.aiPolicyNumberConfidence,
+        aiStart: newDocument.aiExtractedStartDate, aiStartConf: newDocument.aiStartDateConfidence,
+        aiExpiry: newDocument.aiExtractedDate, aiExpiryConf: newDocument.aiConfidence,
+    }, vehicle.registrationNumber);
+
+    const finalUpdatedVehicle = await getVehicleById(vehicleId);
+    if (finalUpdatedVehicle) {
+      generateAlertsForVehicle(finalUpdatedVehicle)
+        .then(() => logger.info(`Background alert generation initiated for document update on vehicle ${finalUpdatedVehicle.id}`))
+        .catch(err => logger.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id}:`, err));
+    }
+    return finalUpdatedVehicle;
+  } catch (error) {
+    logger.error(`Error adding/updating document for vehicle ${vehicleId}:`, error, { docDataType: docData.type });
     return undefined;
   }
-
-  const vehicle = { id: vehicleSnap.id, ...vehicleSnap.data() } as Vehicle;
-  let documents = vehicle.documents || [];
-  const newDocId = generateId();
-  const status = getDocumentComplianceStatus(docData.expiryDate);
-  const uploadedAtISO = formatISO(new Date());
-
-  const newDocument: VehicleDocument = {
-    id: newDocId,
-    vehicleId: vehicleId,
-    type: docData.type,
-    customTypeName: docData.type === 'Other' ? (docData.customTypeName || null) : null,
-    policyNumber: docData.policyNumber || null,
-    startDate: docData.startDate || null,
-    expiryDate: docData.expiryDate || null,
-    documentUrl: docData.documentUrl || null,
-    documentName: docData.documentName || null,
-    status,
-    uploadedAt: uploadedAtISO,
-    aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber || null,
-    aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence || null,
-    aiExtractedStartDate: docData.aiExtractedStartDate || null,
-    aiStartDateConfidence: docData.aiStartDateConfidence || null,
-    aiExtractedDate: docData.aiExtractedDate || null,
-    aiConfidence: docData.aiConfidence || null,
-  };
-
-  if (newDocument.expiryDate) {
-      documents = documents.filter(d =>
-          !(d.type === newDocument.type &&
-           (d.type !== 'Other' || d.customTypeName === newDocument.customTypeName) && 
-           d.status === 'Missing' && !d.expiryDate)
-      );
-  }
-  documents.push(newDocument);
-
-  documents.sort((a, b) => {
-    if (a.type < b.type) return -1;
-    if (a.type > b.type) return 1;
-    if (a.type === 'Other' && b.type === 'Other') {
-        const nameA = a.customTypeName || '';
-        const nameB = b.customTypeName || '';
-        if (nameA < nameB) return -1;
-        if (nameA > nameB) return 1;
-    }
-    return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
-  });
-
-  await updateDoc(vehicleRef, {
-    documents: documents,
-    updatedAt: Timestamp.now(),
-  });
-  logger.info(`Document ${newDocId} added to vehicle ${vehicleId}.`);
-
-  internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', newDocId, {
-      vehicleId: vehicleId,
-      documentType: newDocument.type,
-      customTypeName: newDocument.customTypeName,
-      policyNumber: newDocument.policyNumber,
-      expiryDate: newDocument.expiryDate,
-      fileName: newDocument.documentName,
-      aiPolicy: newDocument.aiExtractedPolicyNumber, aiPolicyConf: newDocument.aiPolicyNumberConfidence,
-      aiStart: newDocument.aiExtractedStartDate, aiStartConf: newDocument.aiStartDateConfidence,
-      aiExpiry: newDocument.aiExtractedDate, aiExpiryConf: newDocument.aiConfidence,
-  }, vehicle.registrationNumber);
-
-  const finalUpdatedVehicle = await getVehicleById(vehicleId);
-  if (finalUpdatedVehicle) {
-    generateAlertsForVehicle(finalUpdatedVehicle)
-      .then(() => logger.info(`Background alert generation initiated for document update on vehicle ${finalUpdatedVehicle.id}`))
-      .catch(err => logger.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id}:`, err));
-  }
-  return finalUpdatedVehicle;
 }
 
 
 // --- Summary Stats ---
 export async function getSummaryStats(): Promise<SummaryStats> {
-  const allVehicles = await getVehicles();
+  logger.info('[DATA] getSummaryStats called');
+  try {
+    const allVehicles = await getVehicles(); // This itself has try-catch
 
-  const vehicleComplianceBreakdown: VehicleComplianceStatusBreakdown = {
-    compliant: 0, expiringSoon: 0, overdue: 0, missingInfo: 0, total: allVehicles.length,
-  };
-  let expiringSoonDocumentsCount = 0;
-  let overdueDocumentsCount = 0;
+    const vehicleComplianceBreakdown: VehicleComplianceStatusBreakdown = {
+      compliant: 0, expiringSoon: 0, overdue: 0, missingInfo: 0, total: allVehicles.length,
+    };
+    let expiringSoonDocumentsCount = 0;
+    let overdueDocumentsCount = 0;
 
-  const docTypeStatsTemplate: () => Record<DocumentType | 'OtherCustom', { expiring: number, overdue: number }> = () => ({
-      Insurance: { expiring: 0, overdue: 0 },
-      Fitness: { expiring: 0, overdue: 0 },
-      PUC: { expiring: 0, overdue: 0 },
-      AITP: { expiring: 0, overdue: 0 },
-      Other: { expiring: 0, overdue: 0 },
-      OtherCustom: { expiring: 0, overdue: 0 },
-  });
-  const docTypeCounts = docTypeStatsTemplate();
+    const docTypeStatsTemplate: () => Record<DocumentType | 'OtherCustom', { expiring: number, overdue: number }> = () => ({
+        Insurance: { expiring: 0, overdue: 0 },
+        Fitness: { expiring: 0, overdue: 0 },
+        PUC: { expiring: 0, overdue: 0 },
+        AITP: { expiring: 0, overdue: 0 },
+        Other: { expiring: 0, overdue: 0 }, // For generic 'Other' type if no custom name
+        OtherCustom: { expiring: 0, overdue: 0 }, // For specific 'Other' with custom name
+    });
+    const docTypeCounts = docTypeStatsTemplate();
 
 
-  allVehicles.forEach(vehicle => {
-    const overallVehicleStatus = getOverallVehicleCompliance(vehicle);
-    switch(overallVehicleStatus) {
-      case 'Compliant': vehicleComplianceBreakdown.compliant++; break;
-      case 'ExpiringSoon': vehicleComplianceBreakdown.expiringSoon++; break;
-      case 'Overdue': vehicleComplianceBreakdown.overdue++; break;
-      case 'MissingInfo': vehicleComplianceBreakdown.missingInfo++; break;
-    }
+    allVehicles.forEach(vehicle => {
+      const overallVehicleStatus = getOverallVehicleCompliance(vehicle);
+      switch(overallVehicleStatus) {
+        case 'Compliant': vehicleComplianceBreakdown.compliant++; break;
+        case 'ExpiringSoon': vehicleComplianceBreakdown.expiringSoon++; break;
+        case 'Overdue': vehicleComplianceBreakdown.overdue++; break;
+        case 'MissingInfo': vehicleComplianceBreakdown.missingInfo++; break;
+      }
 
-    const uniqueActiveDocTypesInVehicle = new Set<string>();
-     (vehicle.documents || []).forEach(doc => {
-        if (doc.expiryDate) {
-            if (doc.type === 'Other' && doc.customTypeName) {
-                uniqueActiveDocTypesInVehicle.add(`Other:${doc.customTypeName}`);
-            } else if (doc.type !== 'Other') {
-                uniqueActiveDocTypesInVehicle.add(doc.type);
-            }
-        }
+      const uniqueActiveDocTypesInVehicle = new Set<string>();
+       (vehicle.documents || []).forEach(doc => {
+          if (doc.expiryDate) { // Only consider active documents with an expiry date
+              if (doc.type === 'Other' && doc.customTypeName) {
+                  uniqueActiveDocTypesInVehicle.add(`Other:${doc.customTypeName}`);
+              } else if (doc.type !== 'Other') {
+                  uniqueActiveDocTypesInVehicle.add(doc.type);
+              } else { // 'Other' type without a custom name
+                  uniqueActiveDocTypesInVehicle.add('Other:GENERIC'); // Use a special key for generic Others
+              }
+          }
+      });
+
+      uniqueActiveDocTypesInVehicle.forEach(typeKey => {
+          let docTypeForLookup: DocumentType;
+          let customTypeNameForLookup: string | undefined;
+
+          if (typeKey.startsWith('Other:')) {
+              docTypeForLookup = 'Other';
+              customTypeNameForLookup = typeKey.substring(6) === 'GENERIC' ? undefined : typeKey.substring(6);
+          } else {
+              docTypeForLookup = typeKey as DocumentType;
+          }
+
+          const latestDoc = getLatestDocumentForType(vehicle, docTypeForLookup, customTypeNameForLookup);
+          if (latestDoc && latestDoc.expiryDate) {
+              const status = getDocumentComplianceStatus(latestDoc.expiryDate);
+              
+              // Determine which key to use in docTypeCounts
+              let countKey: DocumentType | 'OtherCustom' = latestDoc.type;
+              if (latestDoc.type === 'Other') {
+                countKey = latestDoc.customTypeName ? 'OtherCustom' : 'Other';
+              }
+
+              if (status === 'ExpiringSoon') {
+                  expiringSoonDocumentsCount++;
+                  if (docTypeCounts[countKey]) docTypeCounts[countKey].expiring++;
+              } else if (status === 'Overdue') {
+                  overdueDocumentsCount++;
+                   if (docTypeCounts[countKey]) docTypeCounts[countKey].overdue++;
+              }
+          }
+      });
     });
 
-    uniqueActiveDocTypesInVehicle.forEach(typeKey => {
-        const [docTypeForLookup, customTypeNameForLookup] = typeKey.startsWith('Other:')
-            ? ['Other' as DocumentType, typeKey.split(':')[1]]
-            : [typeKey as DocumentType, undefined];
-
-        const latestDoc = getLatestDocumentForType(vehicle, docTypeForLookup, customTypeNameForLookup);
-        if (latestDoc && latestDoc.expiryDate) {
-            const status = getDocumentComplianceStatus(latestDoc.expiryDate);
-            const countKey = latestDoc.type === 'Other' && latestDoc.customTypeName ? 'OtherCustom' : latestDoc.type;
-
-            if (status === 'ExpiringSoon') {
-                expiringSoonDocumentsCount++;
-                if (docTypeCounts[countKey as DocumentType | 'OtherCustom']) docTypeCounts[countKey as DocumentType | 'OtherCustom'].expiring++;
-            } else if (status === 'Overdue') {
-                overdueDocumentsCount++;
-                 if (docTypeCounts[countKey as DocumentType | 'OtherCustom']) docTypeCounts[countKey as DocumentType | 'OtherCustom'].overdue++;
-            }
-        }
-    });
-  });
-  return {
-    totalVehicles: allVehicles.length,
-    compliantVehicles: vehicleComplianceBreakdown.compliant,
-    expiringSoonDocuments: expiringSoonDocumentsCount,
-    overdueDocuments: overdueDocumentsCount,
-    expiringInsurance: docTypeCounts['Insurance'].expiring,
-    overdueInsurance: docTypeCounts['Insurance'].overdue,
-    expiringFitness: docTypeCounts['Fitness'].expiring,
-    overdueFitness: docTypeCounts['Fitness'].overdue,
-    expiringPUC: docTypeCounts['PUC'].expiring,
-    overduePUC: docTypeCounts['PUC'].overdue,
-    expiringAITP: docTypeCounts['AITP'].expiring,
-    overdueAITP: docTypeCounts['AITP'].overdue,
-    vehicleComplianceBreakdown
-  };
+    const resultSummary: SummaryStats = {
+      totalVehicles: allVehicles.length,
+      compliantVehicles: vehicleComplianceBreakdown.compliant,
+      expiringSoonDocuments: expiringSoonDocumentsCount,
+      overdueDocuments: overdueDocumentsCount,
+      expiringInsurance: docTypeCounts['Insurance'].expiring,
+      overdueInsurance: docTypeCounts['Insurance'].overdue,
+      expiringFitness: docTypeCounts['Fitness'].expiring,
+      overdueFitness: docTypeCounts['Fitness'].overdue,
+      expiringPUC: docTypeCounts['PUC'].expiring,
+      overduePUC: docTypeCounts['PUC'].overdue,
+      expiringAITP: docTypeCounts['AITP'].expiring,
+      overdueAITP: docTypeCounts['AITP'].overdue,
+      vehicleComplianceBreakdown
+    };
+    logger.info('[DATA] getSummaryStats successfully computed and returning', { summary: resultSummary });
+    return resultSummary;
+  } catch (error) {
+    logger.error('[DATA] Error in getSummaryStats:', error);
+    // Return a default/empty SummaryStats object to prevent crashes
+    return {
+      totalVehicles: 0,
+      compliantVehicles: 0,
+      expiringSoonDocuments: 0,
+      overdueDocuments: 0,
+      expiringInsurance: 0,
+      overdueInsurance: 0,
+      expiringFitness: 0,
+      overdueFitness: 0,
+      expiringPUC: 0,
+      overduePUC: 0,
+      expiringAITP: 0,
+      overdueAITP: 0,
+      vehicleComplianceBreakdown: { compliant: 0, expiringSoon: 0, overdue: 0, missingInfo: 0, total: 0 },
+    };
+  }
 }
 
 export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo' => {
@@ -569,20 +678,27 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
       }
   }
 
+  // Consider "active" documents as those with an expiry date.
   const activeDocs = (vehicle.documents || []).filter(d => d.expiryDate);
-  if (activeDocs.length === 0 && !hasAllEssentialsWithExpiry && essentialDocsPresentAndActive < ESSENTIAL_DOC_TYPES.length) {
+
+  // If there are no documents with expiry dates AND not all essential types are covered, it's MissingInfo.
+  if (activeDocs.length === 0 && essentialDocsPresentAndActive < ESSENTIAL_DOC_TYPES.length) {
     return 'MissingInfo';
   }
 
+  // Iterate through active documents to check for Overdue or ExpiringSoon.
   for (const doc of activeDocs) {
-    const status = getDocumentComplianceStatus(doc.expiryDate);
-    if (status === 'Overdue') isOverdue = true;
-    if (status === 'ExpiringSoon') isExpiringSoon = true;
+    if (doc.expiryDate) { // Should always be true due to filter above, but good for safety
+      const status = getDocumentComplianceStatus(doc.expiryDate);
+      if (status === 'Overdue') isOverdue = true;
+      if (status === 'ExpiringSoon') isExpiringSoon = true;
+    }
   }
 
   if (isOverdue) return 'Overdue';
   if (isExpiringSoon) return 'ExpiringSoon';
-  if (!hasAllEssentialsWithExpiry) return 'MissingInfo';
+  // If not all essential documents have an expiry date, it's MissingInfo.
+  if (!hasAllEssentialsWithExpiry && essentialDocsPresentAndActive < ESSENTIAL_DOC_TYPES.length) return 'MissingInfo';
   return 'Compliant';
 };
 
@@ -592,38 +708,48 @@ export async function getAuditLogs(filters?: {
   userId?: string;
   entityType?: AuditLogEntry['entityType'];
   action?: AuditLogAction;
-  dateFrom?: string;
-  dateTo?: string;
+  dateFrom?: string; // ISO Date string yyyy-MM-dd
+  dateTo?: string;   // ISO Date string yyyy-MM-dd
 }): Promise<AuditLogEntry[]> {
-  const auditLogsColRef = collection(db, "auditLogs");
+  try {
+    const auditLogsColRef = collection(db, "auditLogs");
+    const queryConstraints: QueryConstraint[] = [orderBy('timestamp', 'desc')]; // Default sort
 
-  const queryConstraints: any[] = [orderBy('timestamp', 'desc')];
-  if (filters?.userId) queryConstraints.unshift(where('userId', '==', filters.userId));
-  if (filters?.entityType) queryConstraints.unshift(where('entityType', '==', filters.entityType));
-  if (filters?.action) queryConstraints.unshift(where('action', '==', filters.action));
+    if (filters?.userId) queryConstraints.unshift(where('userId', '==', filters.userId));
+    if (filters?.entityType) queryConstraints.unshift(where('entityType', '==', filters.entityType));
+    if (filters?.action) queryConstraints.unshift(where('action', '==', filters.action));
 
-  if (filters?.dateFrom) {
-    const fromDate = parseISO(filters.dateFrom);
-    fromDate.setHours(0,0,0,0);
-    queryConstraints.unshift(where('timestamp', '>=', Timestamp.fromDate(fromDate)));
+    if (filters?.dateFrom) {
+      const fromDate = parseISO(filters.dateFrom); // Assuming yyyy-MM-dd
+      fromDate.setHours(0,0,0,0); // Start of day
+      queryConstraints.unshift(where('timestamp', '>=', Timestamp.fromDate(fromDate)));
+    }
+    if (filters?.dateTo) {
+      const toDate = parseISO(filters.dateTo); // Assuming yyyy-MM-dd
+      toDate.setHours(23,59,59,999); // End of day
+      queryConstraints.unshift(where('timestamp', '<=', Timestamp.fromDate(toDate)));
+    }
+
+    const q = query(auditLogsColRef, ...queryConstraints);
+    const auditSnapshot = await getDocs(q);
+
+    return auditSnapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        timestamp: formatISO((data.timestamp as Timestamp).toDate()), // Ensure ISO string
+        userId: data.userId || '',
+        action: data.action || 'UNKNOWN_ACTION',
+        entityType: data.entityType || 'UNKNOWN_ENTITY',
+        entityId: data.entityId || null,
+        entityRegistration: data.entityRegistration || null,
+        details: data.details || {},
+      } as AuditLogEntry;
+    });
+  } catch (error) {
+    logger.error('Error fetching audit logs:', error, { filters });
+    return [];
   }
-  if (filters?.dateTo) {
-    const toDate = parseISO(filters.dateTo);
-    toDate.setHours(23,59,59,999);
-    queryConstraints.unshift(where('timestamp', '<=', Timestamp.fromDate(toDate)));
-  }
-
-  const q = query(auditLogsColRef, ...queryConstraints);
-
-  const auditSnapshot = await getDocs(q);
-  return auditSnapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      timestamp: formatISO((data.timestamp as Timestamp).toDate()),
-    } as AuditLogEntry;
-  });
 }
 
 export async function recordCsvExportAudit(reportName: string, formatUsed: string, filtersApplied: Record<string, any>) {
@@ -635,16 +761,24 @@ export async function recordCsvExportAudit(reportName: string, formatUsed: strin
 }
 
 // --- User Data ---
-export async function getCurrentUser(): Promise<User> {
-  const role: UserRole = MOCK_USER_ID.includes('_admin') ? 'admin' : MOCK_USER_ID.includes('_manager') ? 'manager' : 'viewer';
-  // In a real app, this would fetch from auth or a users collection
-  return {
-    id: MOCK_USER_ID,
-    name: role === 'admin' ? "Admin User" : role === 'manager' ? "Fleet Manager" : "Demo User",
-    email: role === 'admin' ? "admin@example.com" : role === 'manager' ? "manager@example.com" : "user@example.com",
-    avatarUrl: `https://placehold.co/100x100.png?text=${role === 'admin' ? 'AU' : role === 'manager' ? 'FM' : 'DU'}`,
-    role: role
-  };
+export async function getCurrentUser(): Promise<User | null> {
+  // This is a mock. In a real app, this would fetch from auth or a users collection.
+  logger.info('[DATA] getCurrentUser called');
+  try {
+    const role: UserRole = MOCK_USER_ID.includes('_admin') ? 'admin' : MOCK_USER_ID.includes('_manager') ? 'manager' : 'viewer';
+    const user: User = {
+      id: MOCK_USER_ID,
+      name: role === 'admin' ? "Admin User" : role === 'manager' ? "Fleet Manager" : "Demo User",
+      email: role === 'admin' ? "admin@example.com" : role === 'manager' ? "manager@example.com" : "user@example.com",
+      avatarUrl: `https://placehold.co/100x100.png?text=${role === 'admin' ? 'AU' : role === 'manager' ? 'FM' : 'DU'}`,
+      role: role
+    };
+    logger.info('[DATA] getCurrentUser returning mock user', { userId: user.id, role: user.role });
+    return user;
+  } catch (error) {
+      logger.error('[DATA] Error in getCurrentUser (mock implementation):', error);
+      return null;
+  }
 }
 
 // --- Reportable Documents ---
@@ -654,127 +788,116 @@ export async function getReportableDocuments(
     documentTypes?: DocumentType[]
   }
 ): Promise<ReportableDocument[]> {
-  const allVehicles = await getVehicles();
-  const reportableDocs: ReportableDocument[] = [];
-  const now = new Date();
-  now.setHours(0,0,0,0);
+  logger.info('Fetching reportable documents with filters:', { filters });
+  try {
+    const allVehicles = await getVehicles();
+    const reportableDocs: ReportableDocument[] = [];
+    const now = new Date();
+    now.setHours(0,0,0,0); // For consistent day comparison
 
-  allVehicles.forEach(vehicle => {
-    const latestActiveDocsMap = new Map<string, VehicleDocument>();
-    (vehicle.documents || []).forEach(doc => {
-      if (doc.expiryDate) {
-        const typeKey = doc.type === 'Other' && doc.customTypeName ? `Other:${doc.customTypeName}` : doc.type;
-        const existingLatest = latestActiveDocsMap.get(typeKey);
-        if (!existingLatest || parseISO(doc.expiryDate!) > parseISO(existingLatest.expiryDate!) ||
-            (parseISO(doc.expiryDate!).getTime() === parseISO(existingLatest.expiryDate!).getTime() && parseISO(doc.uploadedAt) > parseISO(existingLatest.uploadedAt))) {
-          latestActiveDocsMap.set(typeKey, doc);
+    allVehicles.forEach(vehicle => {
+      const latestActiveDocsMap = new Map<string, VehicleDocument>();
+
+      // Populate latestActiveDocsMap with the latest version of each document type that has an expiry date
+      (vehicle.documents || []).forEach(doc => {
+        if (doc.expiryDate) { // Only consider docs with expiry dates as potentially "active"
+          const typeKey = doc.type === 'Other' && doc.customTypeName ? `Other:${doc.customTypeName}` : doc.type;
+          const existingLatest = latestActiveDocsMap.get(typeKey);
+          if (!existingLatest ||
+              parseISO(doc.expiryDate) > parseISO(existingLatest.expiryDate!) ||
+              (parseISO(doc.expiryDate).getTime() === parseISO(existingLatest.expiryDate!).getTime() && parseISO(doc.uploadedAt) > parseISO(existingLatest.uploadedAt))) {
+            latestActiveDocsMap.set(typeKey, doc);
+          }
         }
+      });
+
+      // Process expected document types to find active ones or create "Missing" entries
+      const allExpectedDocTypeKeys = new Set<string>(DOCUMENT_TYPES.filter(dt => dt !== 'Other'));
+      (vehicle.documents || []).forEach(doc => { // Add any 'Other' custom types from vehicle documents
+          if (doc.type === 'Other' && doc.customTypeName) {
+              allExpectedDocTypeKeys.add(`Other:${doc.customTypeName}`);
+          }
+      });
+      if (!(vehicle.documents || []).some(d => d.type === 'Other' && !d.customTypeName)) { // If no generic 'Other' exists, add it to expected set
+          allExpectedDocTypeKeys.add('Other');
       }
-    });
 
-    DOCUMENT_TYPES.forEach(expectedDocType => {
-        if (expectedDocType === 'Other') {
-            const otherDocsOfCustomTypes = (vehicle.documents || []).filter(d => d.type === 'Other' && d.customTypeName);
-            const uniqueCustomNames = Array.from(new Set(otherDocsOfCustomTypes.map(d => d.customTypeName)));
-            uniqueCustomNames.forEach(customName => {
-                if (customName && !latestActiveDocsMap.has(`Other:${customName}`)) {
-                    const allVersionsOfThisCustomType = otherDocsOfCustomTypes.filter(d => d.customTypeName === customName);
-                    if (allVersionsOfThisCustomType.length > 0) {
-                        const mostRecentVersion = allVersionsOfThisCustomType.sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime())[0];
-                        const status = getDocumentComplianceStatus(mostRecentVersion.expiryDate);
-                        let passesFilters = true;
-                        if (filters?.statuses && filters.statuses.length > 0 && !filters.statuses.includes(status)) passesFilters = false;
-                        if (filters?.documentTypes && filters.documentTypes.length > 0 && !filters.documentTypes.includes('Other')) passesFilters = false;
 
-                        if (passesFilters) {
-                            reportableDocs.push({
-                                ...mostRecentVersion,
-                                vehicleId: vehicle.id,
-                                status: status,
-                                vehicleRegistration: vehicle.registrationNumber,
-                                daysDifference: mostRecentVersion.expiryDate ? differenceInDays(parseISO(mostRecentVersion.expiryDate), now) : -Infinity,
-                            });
-                        }
-                    }
-                }
+      allExpectedDocTypeKeys.forEach(typeKey => {
+        const [docTypeForLookup, customTypeNameForLookup] = typeKey.startsWith('Other:')
+            ? ['Other' as DocumentType, typeKey.split(':')[1] === 'GENERIC' ? undefined : typeKey.split(':')[1]]
+            : [typeKey as DocumentType, undefined];
+
+        const activeDoc = latestActiveDocsMap.get(typeKey);
+
+        if (activeDoc) { // If an active document (with expiry) was found
+          const status = getDocumentComplianceStatus(activeDoc.expiryDate); // expiryDate is guaranteed here
+          const daysDiff = differenceInDays(parseISO(activeDoc.expiryDate!), now);
+
+          if ((!filters?.statuses || filters.statuses.includes(status)) &&
+              (!filters?.documentTypes || filters.documentTypes.includes(activeDoc.type))) {
+            reportableDocs.push({
+              ...activeDoc,
+              status: status,
+              vehicleRegistration: vehicle.registrationNumber,
+              daysDifference: daysDiff,
             });
-        } else {
-            if (!latestActiveDocsMap.has(expectedDocType)) {
-                const missingPlaceholder = (vehicle.documents || []).find(d => d.type === expectedDocType && d.status === 'Missing' && !d.expiryDate);
-                if (missingPlaceholder) {
-                     const status = 'Missing';
-                     let passesFilters = true;
-                     if (filters?.statuses && filters.statuses.length > 0 && !filters.statuses.includes(status)) passesFilters = false;
-                     if (filters?.documentTypes && filters.documentTypes.length > 0 && !filters.documentTypes.includes(expectedDocType)) passesFilters = false;
-                     if (passesFilters) {
-                         reportableDocs.push({
-                            ...missingPlaceholder,
-                            vehicleId: vehicle.id,
-                            status: status,
-                            vehicleRegistration: vehicle.registrationNumber,
-                            daysDifference: -Infinity,
-                        });
-                     }
-                } else {
-                    const allVersionsOfThisType = (vehicle.documents || []).filter(d => d.type === expectedDocType);
-                    if (allVersionsOfThisType.length > 0 && allVersionsOfThisType.every(d => !d.expiryDate || getDocumentComplianceStatus(d.expiryDate) === 'Overdue')) {
-                        const mostRecentVersion = allVersionsOfThisType.sort((a,b) => parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime())[0];
-                         const status = 'Missing';
-                         let passesFilters = true;
-                         if (filters?.statuses && filters.statuses.length > 0 && !filters.statuses.includes(status)) passesFilters = false;
-                         if (filters?.documentTypes && filters.documentTypes.length > 0 && !filters.documentTypes.includes(expectedDocType)) passesFilters = false;
-                         if (passesFilters) {
-                             reportableDocs.push({
-                                ...mostRecentVersion,
-                                vehicleId: vehicle.id,
-                                status: status,
-                                vehicleRegistration: vehicle.registrationNumber,
-                                daysDifference: mostRecentVersion.expiryDate ? differenceInDays(parseISO(mostRecentVersion.expiryDate), now) : -Infinity,
-                            });
-                         }
-                    }
-                }
-            }
+          }
+        } else { // No active document (with expiry) found for this typeKey, consider it "Missing"
+          const status = 'Missing';
+          if ((!filters?.statuses || filters.statuses.includes(status)) &&
+              (!filters?.documentTypes || filters.documentTypes.includes(docTypeForLookup))) {
+
+            // Try to find any version of this document type (even without expiry) to get some details
+            const anyVersionOfDoc = (vehicle.documents || []).find(d =>
+                d.type === docTypeForLookup &&
+                (docTypeForLookup !== 'Other' || d.customTypeName === customTypeNameForLookup)
+            );
+
+            reportableDocs.push({
+              id: anyVersionOfDoc?.id || generateId(), // Use existing ID or generate one
+              vehicleId: vehicle.id,
+              type: docTypeForLookup,
+              customTypeName: customTypeNameForLookup,
+              policyNumber: anyVersionOfDoc?.policyNumber || null,
+              startDate: anyVersionOfDoc?.startDate || null,
+              expiryDate: null, // Explicitly null for missing
+              documentUrl: anyVersionOfDoc?.documentUrl || null,
+              documentName: anyVersionOfDoc?.documentName || null,
+              status: status,
+              uploadedAt: anyVersionOfDoc?.uploadedAt || formatISO(new Date(0)), // Default if no version found
+              vehicleRegistration: vehicle.registrationNumber,
+              daysDifference: -Infinity, // Consistent value for sorting Missing
+              aiExtractedPolicyNumber: anyVersionOfDoc?.aiExtractedPolicyNumber || null,
+              aiPolicyNumberConfidence: anyVersionOfDoc?.aiPolicyNumberConfidence || null,
+              aiExtractedStartDate: anyVersionOfDoc?.aiExtractedStartDate || null,
+              aiStartDateConfidence: anyVersionOfDoc?.aiStartDateConfidence || null,
+              aiExtractedDate: anyVersionOfDoc?.aiExtractedDate || null,
+              aiConfidence: anyVersionOfDoc?.aiConfidence || null,
+            });
+          }
         }
+      });
     });
-
-    latestActiveDocsMap.forEach(doc => {
-      const status = getDocumentComplianceStatus(doc.expiryDate);
-      let daysDiff = -Infinity;
-      if (doc.expiryDate) {
-        const expDate = parseISO(doc.expiryDate);
-        daysDiff = differenceInDays(expDate, now);
-      }
-      let passesFilters = true;
-      if (filters?.statuses && filters.statuses.length > 0 && !filters.statuses.includes(status)) passesFilters = false;
-      if (filters?.documentTypes && filters.documentTypes.length > 0 && !filters.documentTypes.includes(doc.type)) passesFilters = false;
-
-      if (passesFilters) {
-        reportableDocs.push({
-            ...doc,
-            status: status,
-            vehicleRegistration: vehicle.registrationNumber,
-            daysDifference: daysDiff,
-        });
-      }
-    });
-  });
-
-  return reportableDocs.sort((a, b) => {
-    const statusOrderValue = (s: ReportableDocument['status']) => ({ 'Overdue': 1, 'ExpiringSoon': 2, 'Missing': 3, 'Compliant': 4 }[s] || 5);
-    const statusDiff = statusOrderValue(a.status) - statusOrderValue(b.status);
-    if (statusDiff !== 0) return statusDiff;
-
-    let daysDiffCompare = 0;
-    if(a.status === 'Compliant' && b.status === 'Compliant') {
-        daysDiffCompare = b.daysDifference - a.daysDifference;
-    } else {
-        daysDiffCompare = a.daysDifference - b.daysDifference;
-    }
-
-    if (daysDiffCompare !== 0) return daysDiffCompare;
-    return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
-  });
-}
-
     
+    // Sort final list
+    const sorted = reportableDocs.sort((a, b) => {
+      const statusOrderValue = (s: ReportableDocument['status']) => ({ 'Overdue': 1, 'ExpiringSoon': 2, 'Missing': 3, 'Compliant': 4 }[s] || 5);
+      const statusDiff = statusOrderValue(a.status) - statusOrderValue(b.status);
+      if (statusDiff !== 0) return statusDiff;
+
+      // For Compliant, sort by furthest expiry first (more daysDifference is better)
+      // For others, sort by closest expiry/most overdue first (less daysDifference is more urgent)
+      let daysDiffCompare = (a.status === 'Compliant' && b.status === 'Compliant') ? (b.daysDifference - a.daysDifference) : (a.daysDifference - b.daysDifference);
+      if (daysDiffCompare !== 0) return daysDiffCompare;
+
+      return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
+    });
+    logger.info(`Returning ${sorted.length} reportable documents.`);
+    return sorted;
+
+  } catch (error) {
+    logger.error('Error fetching reportable documents:', error, { filters });
+    return [];
+  }
+}
