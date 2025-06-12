@@ -16,21 +16,30 @@ const firebaseConfig = {
 };
 
 // Log the configuration being used (be mindful of sensitive data in production logs)
-// For local development, this is helpful.
 if (process.env.NODE_ENV === 'development') {
-    logger.debug('Firebase Config Being Used:', firebaseConfig);
+    logger.debug('Firebase Config Being Used:', {
+        apiKey: firebaseConfig.apiKey ? '***' : undefined, // Mask API key
+        authDomain: firebaseConfig.authDomain,
+        projectId: firebaseConfig.projectId,
+        storageBucket: firebaseConfig.storageBucket,
+        messagingSenderId: firebaseConfig.messagingSenderId,
+        appId: firebaseConfig.appId ? '***' : undefined, // Mask App ID
+        measurementId: firebaseConfig.measurementId
+    });
 }
-
 
 // Initialize Firebase
 let app;
+
+if (!firebaseConfig.projectId) {
+  const errorMessage = "CRITICAL Firebase Setup Error: NEXT_PUBLIC_FIREBASE_PROJECT_ID is not defined. Check your .env file or environment variables. The application cannot connect to Firebase without a Project ID.";
+  logger.error(errorMessage);
+  // Throw an error immediately to stop further execution if projectId is missing.
+  // This gives a clearer indication than a downstream Firestore connection error.
+  throw new Error(errorMessage);
+}
+
 if (!getApps().length) {
-  if (!firebaseConfig.projectId) {
-    const errorMessage = "Firebase projectId is not defined. Check your .env file and ensure NEXT_PUBLIC_FIREBASE_PROJECT_ID is set.";
-    logger.error(errorMessage);
-    // Potentially throw an error or handle this case more gracefully
-    // For now, initializing with potentially undefined config will likely lead to Firebase errors downstream.
-  }
   try {
     app = initializeApp(firebaseConfig);
     logger.info('Firebase app initialized successfully.');
