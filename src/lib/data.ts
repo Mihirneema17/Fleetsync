@@ -13,6 +13,7 @@ import {
   orderBy,
   Timestamp, // Firestore Timestamp
   writeBatch,
+  type QueryConstraint, // Import QueryConstraint
 } from 'firebase/firestore';
 import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, UserRole, VehicleComplianceStatusBreakdown, ReportableDocument } from './types';
 import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, DATE_FORMAT } from './constants';
@@ -136,26 +137,36 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
 }
 
 export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
-  const alertsColRef = collection(db, "alerts");
-  let qParams: any[] = [alertsColRef, where('userId', '==', MOCK_USER_ID)];
+  try {
+    const alertsColRef = collection(db, "alerts");
+    const queryConstraints: QueryConstraint[] = [
+      where('userId', '==', MOCK_USER_ID),
+      orderBy('createdAt', 'desc')
+    ];
 
-  if (onlyUnread) {
-    qParams.push(where('isRead', '==', false));
+    if (onlyUnread) {
+      // Add 'isRead' filter. It's generally better to add filters that reduce the dataset first,
+      // but Firestore query order for where() clauses doesn't strictly matter for performance
+      // as much as index compatibility. orderBy usually comes after filters.
+      queryConstraints.unshift(where('isRead', '==', false));
+    }
+
+    const q = query(alertsColRef, ...queryConstraints);
+    const alertSnapshot = await getDocs(q);
+
+    return alertSnapshot.docs.map(docSnap => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        ...data,
+        createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : data.createdAt,
+        dueDate: data.dueDate, // Assuming dueDate is already a string
+      } as Alert;
+    });
+  } catch (error) {
+    logger.error('Error fetching alerts from Firestore:', error);
+    return []; // Return empty array on error
   }
-  qParams.push(orderBy('createdAt', 'desc'));
-
-  const q = query.apply(null, qParams as any);
-
-  const alertSnapshot = await getDocs(q);
-  return alertSnapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : data.createdAt,
-      dueDate: data.dueDate,
-    } as Alert;
-  });
 }
 
 export async function markAlertAsRead(alertId: string): Promise<boolean> {
@@ -272,7 +283,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 
   const newVehicleDataToStore = {
     ...vehicleData,
-    documents: initialDocuments, // Store with empty vehicleId initially
+    documents: initialDocuments,
     createdAt: now,
     updatedAt: now,
   };
@@ -280,7 +291,6 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const docRef = await addDoc(collection(db, 'vehicles'), newVehicleDataToStore);
   logger.info(`Vehicle added successfully with ID: ${docRef.id}`);
 
-  // Update vehicleId in the initial documents and update the vehicle
   const finalInitialDocuments = initialDocuments.map(d => ({...d, vehicleId: docRef.id}));
   await updateDoc(docRef, { documents: finalInitialDocuments });
 
@@ -295,7 +305,6 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 
   internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
 
-  // Fire-and-forget alert generation
   generateAlertsForVehicle(newVehicleForReturn)
     .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id}`))
     .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
@@ -767,15 +776,5 @@ export async function getReportableDocuments(
     return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
   });
 }
-// The comments below were part of the original prompt for context, not executable code.
-// For addVehicle, it might be cleaner to:
-// 1. Add the vehicle with an empty documents array.
-// 2. Then, create the initial documents with the correct vehicleId.
-// 3. Update the vehicle document with these initial documents.
-// The current logic adds initialDocuments with empty vehicleId, then this might cause issues
-// if these documents are directly used before the vehicleId is correctly back-filled.
-// The code already attempts to backfill but if the `newVehicleForReturn` is used before
-// `updateDoc(docRef, { documents: finalInitialDocuments });` completes, it could be problematic.
-// The current `addVehicle` returns `newVehicleForReturn` which *does* have `finalInitialDocuments`
-// (with correct IDs). The Firestore data is then updated. This seems okay.
-// The issue is likely the `undefined` to `null` conversion for all optional fields in `initialDocuments`.
+
+    
