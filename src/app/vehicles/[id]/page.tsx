@@ -215,7 +215,7 @@ export default async function VehicleDetailPage({ params }: VehicleDetailPagePro
                             </TableCell>
                             <TableCell className="text-right">
                               {/* Add New and View Doc buttons moved to VehicleDocumentManager where modal context is needed */}
-                               <span className="text-xs text-muted-foreground">Manage in section above</span>
+                              
                             </TableCell>
                           </TableRow>
                         );
