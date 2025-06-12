@@ -12,7 +12,9 @@ export async function getUnreadAlertsCountAction(): Promise<number> {
     return unreadAlerts.length;
   } catch (error) {
     logger.error('Error in getUnreadAlertsCountAction:', error);
-    return 0; // Return a default value in case of error
+    // Return a default value in case of error to prevent unhandled server exceptions
+    // from causing an "unexpected response" on the client.
+    return 0;
   }
 }
 
@@ -21,6 +23,8 @@ export async function getCurrentUserAction(): Promise<User | null> {
     return await getCurrentUser();
   } catch (error) {
     logger.error('Error in getCurrentUserAction:', error);
-    return null; // Return null or handle error as appropriate
+    // Return null or handle error as appropriate to prevent "unexpected response"
+    return null;
   }
 }
+
