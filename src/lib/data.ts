@@ -250,23 +250,29 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
     if (docType !== 'Other') {
       initialDocuments.push({
         id: generateId(),
-        vehicleId: '',
+        vehicleId: '', // This will be updated after vehicle creation
         type: docType,
-        customTypeName: undefined,
+        customTypeName: null,
         policyNumber: null,
         startDate: null,
         expiryDate: null,
         status: 'Missing',
         uploadedAt: nowISO,
-        documentName: undefined,
-        documentUrl: undefined,
+        documentName: null,
+        documentUrl: null,
+        aiExtractedDate: null,
+        aiConfidence: null,
+        aiExtractedPolicyNumber: null,
+        aiPolicyNumberConfidence: null,
+        aiExtractedStartDate: null,
+        aiStartDateConfidence: null,
       });
     }
   });
 
   const newVehicleDataToStore = {
     ...vehicleData,
-    documents: initialDocuments,
+    documents: initialDocuments, // Store with empty vehicleId initially
     createdAt: now,
     updatedAt: now,
   };
@@ -274,10 +280,15 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const docRef = await addDoc(collection(db, 'vehicles'), newVehicleDataToStore);
   logger.info(`Vehicle added successfully with ID: ${docRef.id}`);
 
+  // Update vehicleId in the initial documents and update the vehicle
+  const finalInitialDocuments = initialDocuments.map(d => ({...d, vehicleId: docRef.id}));
+  await updateDoc(docRef, { documents: finalInitialDocuments });
+
+
   const newVehicleForReturn: Vehicle = {
     ...vehicleData,
     id: docRef.id,
-    documents: initialDocuments.map(d => ({...d, vehicleId: docRef.id})),
+    documents: finalInitialDocuments,
     createdAt: nowISO,
     updatedAt: nowISO,
   };
@@ -358,12 +369,12 @@ export async function addOrUpdateDocument(
   vehicleId: string,
   docData: {
     type: DocumentType;
-    customTypeName?: string;
+    customTypeName?: string | null;
     policyNumber?: string | null;
     startDate?: string | null;
     expiryDate: string | null;
-    documentName?: string;
-    documentUrl?: string;
+    documentName?: string | null;
+    documentUrl?: string | null;
     aiExtractedPolicyNumber?: string | null;
     aiPolicyNumberConfidence?: number | null;
     aiExtractedStartDate?: string | null;
@@ -390,26 +401,26 @@ export async function addOrUpdateDocument(
     id: newDocId,
     vehicleId: vehicleId,
     type: docData.type,
-    customTypeName: docData.type === 'Other' ? docData.customTypeName : undefined,
-    policyNumber: docData.policyNumber,
-    startDate: docData.startDate,
-    expiryDate: docData.expiryDate,
-    documentUrl: docData.documentUrl,
-    documentName: docData.documentName,
+    customTypeName: docData.type === 'Other' ? (docData.customTypeName || null) : null,
+    policyNumber: docData.policyNumber || null,
+    startDate: docData.startDate || null,
+    expiryDate: docData.expiryDate || null,
+    documentUrl: docData.documentUrl || null,
+    documentName: docData.documentName || null,
     status,
     uploadedAt: uploadedAtISO,
-    aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber,
-    aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence,
-    aiExtractedStartDate: docData.aiExtractedStartDate,
-    aiStartDateConfidence: docData.aiStartDateConfidence,
-    aiExtractedDate: docData.aiExtractedDate,
-    aiConfidence: docData.aiConfidence,
+    aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber || null,
+    aiPolicyNumberConfidence: docData.aiPolicyNumberConfidence || null,
+    aiExtractedStartDate: docData.aiExtractedStartDate || null,
+    aiStartDateConfidence: docData.aiStartDateConfidence || null,
+    aiExtractedDate: docData.aiExtractedDate || null,
+    aiConfidence: docData.aiConfidence || null,
   };
 
   if (newDocument.expiryDate) {
       documents = documents.filter(d =>
           !(d.type === newDocument.type &&
-           (d.type !== 'Other' || d.customTypeName === newDocument.customTypeName) &&
+           (d.type !== 'Other' || d.customTypeName === newDocument.customTypeName) && 
            d.status === 'Missing' && !d.expiryDate)
       );
   }
@@ -756,4 +767,15 @@ export async function getReportableDocuments(
     return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
   });
 }
-
+// The comments below were part of the original prompt for context, not executable code.
+// For addVehicle, it might be cleaner to:
+// 1. Add the vehicle with an empty documents array.
+// 2. Then, create the initial documents with the correct vehicleId.
+// 3. Update the vehicle document with these initial documents.
+// The current logic adds initialDocuments with empty vehicleId, then this might cause issues
+// if these documents are directly used before the vehicleId is correctly back-filled.
+// The code already attempts to backfill but if the `newVehicleForReturn` is used before
+// `updateDoc(docRef, { documents: finalInitialDocuments });` completes, it could be problematic.
+// The current `addVehicle` returns `newVehicleForReturn` which *does* have `finalInitialDocuments`
+// (with correct IDs). The Firestore data is then updated. This seems okay.
+// The issue is likely the `undefined` to `null` conversion for all optional fields in `initialDocuments`.

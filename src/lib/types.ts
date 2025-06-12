@@ -1,5 +1,3 @@
-
-
 export type VehicleType = string; // Changed from union to string to allow custom types
 export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
@@ -18,12 +16,12 @@ export interface VehicleDocument {
   id: string;
   vehicleId: string;
   type: DocumentType;
-  customTypeName?: string; // For 'Other' document type
+  customTypeName?: string | null; // For 'Other' document type
   policyNumber?: string | null;
   startDate?: string | null;    // ISO Date string
   expiryDate: string | null; // ISO Date string
-  documentUrl?: string; // URL to the stored document
-  documentName?: string; // Name of the uploaded file
+  documentUrl?: string | null; // URL to the stored document
+  documentName?: string | null; // Name of the uploaded file
   status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing'; // This status is for THIS specific document instance
   uploadedAt: string; // ISO datetime string when this document record was created/uploaded
   
@@ -46,6 +44,7 @@ export interface Alert {
   createdAt: string;
   isRead: boolean;
   userId?: string;
+  policyNumber?: string | null;
 }
 
 export type UserRole = 'admin' | 'manager' | 'viewer';
@@ -96,8 +95,8 @@ export interface AuditLogEntry {
   userId: string; 
   action: AuditLogAction;
   entityType: 'VEHICLE' | 'DOCUMENT' | 'ALERT' | 'USER' | 'SYSTEM' | 'REPORT';
-  entityId?: string; 
-  entityRegistration?: string; 
+  entityId?: string | null; 
+  entityRegistration?: string | null; 
   details: Record<string, any>; 
 }
 
@@ -105,4 +104,3 @@ export interface ReportableDocument extends VehicleDocument {
   vehicleRegistration: string;
   daysDifference: number; // positive for days left, negative for days overdue
 }
-
