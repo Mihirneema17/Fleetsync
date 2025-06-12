@@ -1,6 +1,7 @@
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+import { logger } from './logger'; // Import the logger
 // import { getAuth } from 'firebase/auth'; // We can add this later if we implement Firebase Auth
 // import { getStorage } from 'firebase/storage'; // We can add this later for file uploads
 
@@ -14,27 +15,46 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID, // Optional
 };
 
-// --- TEMPORARY DIAGNOSTIC LOG ---
-// Check your server console (where you run `npm run dev`) for this output.
-// Ensure all values match your Firebase project settings.
-// If values are undefined, your .env file might not be loaded correctly or there's a typo in variable names.
-console.log("Firebase Config Being Used:", firebaseConfig);
-// --- END TEMPORARY DIAGNOSTIC LOG ---
+// Log the configuration being used (be mindful of sensitive data in production logs)
+// For local development, this is helpful.
+if (process.env.NODE_ENV === 'development') {
+    logger.debug('Firebase Config Being Used:', firebaseConfig);
+}
+
 
 // Initialize Firebase
 let app;
 if (!getApps().length) {
   if (!firebaseConfig.projectId) {
-    console.error("Firebase projectId is not defined. Check your .env file and ensure NEXT_PUBLIC_FIREBASE_PROJECT_ID is set.");
+    const errorMessage = "Firebase projectId is not defined. Check your .env file and ensure NEXT_PUBLIC_FIREBASE_PROJECT_ID is set.";
+    logger.error(errorMessage);
     // Potentially throw an error or handle this case more gracefully
     // For now, initializing with potentially undefined config will likely lead to Firebase errors downstream.
   }
-  app = initializeApp(firebaseConfig);
+  try {
+    app = initializeApp(firebaseConfig);
+    logger.info('Firebase app initialized successfully.');
+  } catch (error) {
+    logger.error('Firebase app initialization failed:', error);
+    // Handle error appropriately, maybe re-throw or exit
+    throw error; // Re-throwing so the app doesn't continue with a broken Firebase setup
+  }
 } else {
   app = getApp();
+  logger.info('Existing Firebase app retrieved.');
 }
 
-const db = getFirestore(app);
+let db: import('firebase/firestore').Firestore;
+try {
+  db = getFirestore(app);
+  logger.info('Firestore instance obtained successfully.');
+} catch (error) {
+  logger.error('Failed to get Firestore instance:', error);
+  // Depending on your app's needs, you might want to throw here too
+  // or provide a mock/fallback if Firestore is not critical for all parts
+  throw error;
+}
+
 // const auth = getAuth(app); // For later
 // const storage = getStorage(app); // For later
 

@@ -17,6 +17,7 @@ import {
 import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, UserRole, VehicleComplianceStatusBreakdown, ReportableDocument } from './types';
 import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, DATE_FORMAT } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays } from 'date-fns';
+import { logger } from './logger'; // Import the logger
 
 // --- Helper Functions ---
 const generateId = () => doc(collection(db, '_')).id; // Generate Firestore compatible ID
@@ -64,6 +65,14 @@ async function internalLogAuditEvent(
 ) {
   try {
     const newAuditLogId = generateId();
+    // Ensure details object is cleaned of undefined values or stringify/parse to handle complex objects
+    const cleanedDetails = JSON.parse(JSON.stringify(details, (key, value) => {
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+      return value === undefined ? null : value;
+    }));
+
     const auditLogData = {
       id: newAuditLogId,
       timestamp: Timestamp.now(),
@@ -72,20 +81,22 @@ async function internalLogAuditEvent(
       entityType,
       entityId: entityId === undefined ? null : entityId,
       entityRegistration: entityRegistration === undefined ? null : entityRegistration,
-      details: details ? JSON.parse(JSON.stringify(details, (key, value) => value instanceof Date ? value.toISOString() : value)) : {},
+      details: cleanedDetails,
     };
     await addDoc(collection(db, 'auditLogs'), auditLogData);
+    logger.info('Audit event logged successfully', { action, entityType, entityId });
   } catch (error) {
-    console.error("Error logging audit event to Firestore:", error, "Data:", {action, entityType, entityId, details, entityRegistration});
+    logger.error("Error logging audit event to Firestore:", error, {action, entityType, entityId, details, entityRegistration});
   }
 }
 
 // --- Alerts ---
 async function generateAlertsForVehicle(vehicle: Vehicle) {
   if (!vehicle || !vehicle.id) {
-    console.error("generateAlertsForVehicle: Invalid vehicle object provided.", vehicle);
+    logger.warn("generateAlertsForVehicle: Invalid vehicle object provided.", { vehicle });
     return;
   }
+  logger.info(`Starting alert generation for vehicle ${vehicle.id}`);
   try {
     const alertsColRef = collection(db, "alerts");
 
@@ -96,9 +107,11 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
     const existingUnreadAlertsSnap = await getDocs(existingUnreadAlertsQuery);
     const batch = writeBatch(db);
     existingUnreadAlertsSnap.forEach(alertDoc => {
+        logger.debug(`Deleting existing unread alert ${alertDoc.id} for vehicle ${vehicle.id}`);
         batch.delete(alertDoc.ref);
     });
     await batch.commit();
+    logger.info(`Cleared ${existingUnreadAlertsSnap.size} existing unread alerts for vehicle ${vehicle.id}`);
 
     const uniqueDocTypesToConsider = new Set<string>();
     (vehicle.documents || []).forEach(doc => {
@@ -110,6 +123,8 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
         }
       }
     });
+
+    logger.debug(`Unique document types to consider for alerts for vehicle ${vehicle.id}:`, Array.from(uniqueDocTypesToConsider));
 
     for (const typeKey of uniqueDocTypesToConsider) {
       let docType: DocumentType;
@@ -128,7 +143,8 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
         const currentStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
         if (currentStatus === 'ExpiringSoon' || currentStatus === 'Overdue') {
           const newAlertId = generateId();
-          await addDoc(alertsColRef, {
+          const alertMessage = `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate!), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate!), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`;
+          const newAlertData = {
             id: newAlertId,
             vehicleId: vehicle.id,
             vehicleRegistration: vehicle.registrationNumber,
@@ -136,16 +152,19 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
             customDocumentTypeName: latestDoc.customTypeName,
             policyNumber: latestDoc.policyNumber,
             dueDate: latestDoc.expiryDate,
-            message: `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate!), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate!), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`,
+            message: alertMessage,
             createdAt: Timestamp.now(),
             isRead: false,
             userId: MOCK_USER_ID,
-          });
+          };
+          await addDoc(alertsColRef, newAlertData);
+          logger.info(`Generated ${currentStatus} alert for vehicle ${vehicle.id}, doc type ${typeKey}`, { alertId: newAlertId });
         }
       }
     }
+    logger.info(`Finished alert generation for vehicle ${vehicle.id}`);
   } catch (error) {
-    console.error(`Error during background alert generation for vehicle ${vehicle.id}:`, error);
+    logger.error(`Error during alert generation for vehicle ${vehicle.id}:`, error);
   }
 }
 
@@ -181,9 +200,10 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
         const alertData = alertSnap.data();
         internalLogAuditEvent('MARK_ALERT_READ', 'ALERT', alertId, { documentType: alertData.documentType, vehicleRegistration: alertData.vehicleRegistration }, alertData.vehicleRegistration);
     }
+    logger.info(`Alert ${alertId} marked as read.`);
     return true;
   } catch (error) {
-    console.error("Error marking alert as read:", error);
+    logger.error(`Error marking alert ${alertId} as read:`, error);
     return false;
   }
 }
@@ -192,6 +212,7 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
 // --- Data Operations (Firestore) ---
 
 export async function getVehicles(): Promise<Vehicle[]> {
+  logger.debug('Fetching all vehicles...');
   const vehiclesCol = collection(db, 'vehicles');
   const vehicleSnapshot = await getDocs(query(vehiclesCol, orderBy('registrationNumber')));
   const vehicleList = vehicleSnapshot.docs.map(docSnap => {
@@ -211,10 +232,12 @@ export async function getVehicles(): Promise<Vehicle[]> {
       })),
     } as Vehicle;
   });
+  logger.info(`Fetched ${vehicleList.length} vehicles.`);
   return vehicleList;
 }
 
 export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
+  logger.debug(`Fetching vehicle by ID: ${id}`);
   const vehicleRef = doc(db, 'vehicles', id);
   const vehicleSnap = await getDoc(vehicleRef);
   if (vehicleSnap.exists()) {
@@ -243,12 +266,15 @@ export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
         return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
       }),
     } as Vehicle;
+    logger.info(`Vehicle ${id} fetched successfully.`);
     return vehicleData;
   }
+  logger.warn(`Vehicle with ID ${id} not found.`);
   return undefined;
 }
 
 export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>): Promise<Vehicle> {
+  logger.info('Adding new vehicle:', { registrationNumber: vehicleData.registrationNumber });
   const now = Timestamp.now();
   const nowISO = formatISO(now.toDate());
 
@@ -279,6 +305,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   };
 
   const docRef = await addDoc(collection(db, 'vehicles'), newVehicleDataToStore);
+  logger.info(`Vehicle added successfully with ID: ${docRef.id}`);
 
   const newVehicleForReturn: Vehicle = {
     ...vehicleData,
@@ -292,19 +319,25 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 
   // Fire-and-forget alert generation
   generateAlertsForVehicle(newVehicleForReturn)
-    .catch(err => console.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
+    .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id}`))
+    .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
 
   return newVehicleForReturn;
 }
 
 export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>>): Promise<Vehicle | undefined> {
+  logger.info(`Updating vehicle ${id}:`, updates);
   const vehicleRef = doc(db, 'vehicles', id);
   const vehicleSnap = await getDoc(vehicleRef);
-  if (!vehicleSnap.exists()) return undefined;
+  if (!vehicleSnap.exists()) {
+    logger.warn(`Update failed: Vehicle ${id} not found.`);
+    return undefined;
+  }
 
   const oldVehicleData = vehicleSnap.data() as Omit<Vehicle, 'id'>;
   const updatedDataToStore = { ...updates, updatedAt: Timestamp.now() };
   await updateDoc(vehicleRef, updatedDataToStore);
+  logger.info(`Vehicle ${id} updated successfully.`);
 
   const changedFields: Record<string, any> = {};
   for (const key in updates) {
@@ -321,21 +354,26 @@ export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, '
 
   const updatedVehicle = await getVehicleById(id);
   if (updatedVehicle) {
-    // Fire-and-forget alert generation
     generateAlertsForVehicle(updatedVehicle)
-      .catch(err => console.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id}:`, err));
+      .then(() => logger.info(`Background alert generation initiated for updated vehicle ${updatedVehicle.id}`))
+      .catch(err => logger.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id}:`, err));
   }
   return updatedVehicle;
 }
 
 export async function deleteVehicle(id: string): Promise<boolean> {
+  logger.info(`Attempting to delete vehicle ${id}`);
   const vehicleRef = doc(db, 'vehicles', id);
   const vehicleSnap = await getDoc(vehicleRef);
-  if (!vehicleSnap.exists()) return false;
+  if (!vehicleSnap.exists()) {
+    logger.warn(`Delete failed: Vehicle ${id} not found.`);
+    return false;
+  }
 
   const vehicleToDeleteData = vehicleSnap.data() as Vehicle;
 
   await deleteDoc(vehicleRef);
+  logger.info(`Vehicle ${id} deleted from 'vehicles' collection.`);
 
   const alertsCol = collection(db, 'alerts');
   const q = query(alertsCol, where('vehicleId', '==', id));
@@ -343,6 +381,7 @@ export async function deleteVehicle(id: string): Promise<boolean> {
   const batch = writeBatch(db);
   alertSnapshot.docs.forEach(docSnap => batch.delete(docSnap.ref));
   await batch.commit();
+  logger.info(`Deleted ${alertSnapshot.size} alerts associated with vehicle ${id}.`);
 
   internalLogAuditEvent('DELETE_VEHICLE', 'VEHICLE', id, { registrationNumber: vehicleToDeleteData.registrationNumber }, vehicleToDeleteData.registrationNumber);
   return true;
@@ -366,10 +405,11 @@ export async function addOrUpdateDocument(
     aiConfidence?: number | null;
   }
 ): Promise<Vehicle | undefined> {
+  logger.info(`Adding/updating document for vehicle ${vehicleId}:`, { type: docData.type, name: docData.documentName });
   const vehicleRef = doc(db, 'vehicles', vehicleId);
   const vehicleSnap = await getDoc(vehicleRef);
   if (!vehicleSnap.exists()) {
-    console.error("Vehicle not found for adding document:", vehicleId);
+    logger.error(`Vehicle not found for adding document: ${vehicleId}`);
     return undefined;
   }
 
@@ -424,6 +464,7 @@ export async function addOrUpdateDocument(
     documents: documents,
     updatedAt: Timestamp.now(),
   });
+  logger.info(`Document ${newDocId} added to vehicle ${vehicleId}.`);
 
   internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', newDocId, {
       vehicleId: vehicleId,
@@ -439,9 +480,9 @@ export async function addOrUpdateDocument(
 
   const finalUpdatedVehicle = await getVehicleById(vehicleId);
   if (finalUpdatedVehicle) {
-     // Fire-and-forget alert generation
     generateAlertsForVehicle(finalUpdatedVehicle)
-      .catch(err => console.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id}:`, err));
+      .then(() => logger.info(`Background alert generation initiated for document update on vehicle ${finalUpdatedVehicle.id}`))
+      .catch(err => logger.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id}:`, err));
   }
   return finalUpdatedVehicle;
 }
@@ -609,6 +650,7 @@ export async function recordCsvExportAudit(reportName: string, formatUsed: strin
 // --- User Data ---
 export async function getCurrentUser(): Promise<User> {
   const role: UserRole = MOCK_USER_ID.includes('_admin') ? 'admin' : MOCK_USER_ID.includes('_manager') ? 'manager' : 'viewer';
+  // In a real app, this would fetch from auth or a users collection
   return {
     id: MOCK_USER_ID,
     name: role === 'admin' ? "Admin User" : role === 'manager' ? "Fleet Manager" : "Demo User",
@@ -747,3 +789,4 @@ export async function getReportableDocuments(
     return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
   });
 }
+
