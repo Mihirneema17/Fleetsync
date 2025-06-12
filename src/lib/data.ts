@@ -21,8 +21,25 @@ import { format, formatISO, addDays, isBefore, parseISO, differenceInDays } from
 import { logger } from './logger'; // Import the logger
 import { getDocumentComplianceStatus, getLatestDocumentForType } from './utils'; // Import from utils
 
+// Diagnostic check for db initialization
+if (!db) {
+  logger.error("[CRITICAL_DATA_INIT_FAILURE] Firestore 'db' instance is NOT initialized at the time of data.ts module evaluation. Firebase setup in firebase.ts likely failed catastrophically. Further Firestore operations will fail.");
+  // Consider throwing an error here if this state should absolutely halt the server:
+  // throw new Error("[CRITICAL_DATA_INIT_FAILURE] Firestore 'db' not available in data.ts.");
+} else {
+  logger.info("[DATA_INIT_SUCCESS] Firestore 'db' instance is confirmed available at data.ts module evaluation.");
+}
+
 // --- Helper Functions ---
-const generateId = () => doc(collection(db, '_')).id; // Generate Firestore compatible ID
+const generateId = () => {
+  if (!db) {
+    // This case should ideally be prevented by the check above or by firebase.ts throwing.
+    // However, as a last resort, log and throw if db is not available here.
+    logger.error("generateId: Firestore 'db' instance is not initialized. Cannot generate ID.");
+    throw new Error("Firestore 'db' instance not initialized for generateId.");
+  }
+  return doc(collection(db, '_')).id; // Generate Firestore compatible ID
+}
 
 async function internalLogAuditEvent(
   action: AuditLogAction,
@@ -31,6 +48,10 @@ async function internalLogAuditEvent(
   details: Record<string, any> = {},
   entityRegistration?: string | null // Allow null
 ) {
+  if (!db) {
+    logger.error("internalLogAuditEvent: Firestore 'db' instance is not initialized. Audit event cannot be logged.");
+    return;
+  }
   try {
     const newAuditLogId = generateId();
     const cleanedDetails = JSON.parse(JSON.stringify(details, (key, value) => {
@@ -59,6 +80,10 @@ async function internalLogAuditEvent(
 
 // --- Alerts ---
 async function generateAlertsForVehicle(vehicle: Vehicle) {
+  if (!db) {
+    logger.error("generateAlertsForVehicle: Firestore 'db' instance is not initialized. Alerts cannot be generated.");
+    return;
+  }
   if (!vehicle || !vehicle.id) {
     logger.warn("generateAlertsForVehicle: Invalid vehicle object provided.", { vehicle });
     return;
@@ -138,17 +163,26 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
 }
 
 export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
+  if (!db) {
+    logger.error("[DATA] getAlerts: Firestore 'db' instance is not initialized. Cannot fetch alerts.");
+    return [];
+  }
   logger.info(`[DATA] getAlerts called. onlyUnread: ${onlyUnread}`);
   try {
     const alertsColRef = collection(db, "alerts");
     const queryConstraints: QueryConstraint[] = [
-      where('userId', '==', MOCK_USER_ID), // Ensure this filter is effective
       orderBy('createdAt', 'desc')
     ];
 
     if (onlyUnread) {
       queryConstraints.unshift(where('isRead', '==', false));
+      // This userId filter is crucial for matching the composite index
+      queryConstraints.unshift(where('userId', '==', MOCK_USER_ID));
+    } else {
+      // If not filtering by isRead, we still need userId for consistency if other queries rely on it or for general scoping
+      queryConstraints.unshift(where('userId', '==', MOCK_USER_ID));
     }
+
 
     const q = query(alertsColRef, ...queryConstraints);
     const alertSnapshot = await getDocs(q);
@@ -177,6 +211,10 @@ export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
 }
 
 export async function markAlertAsRead(alertId: string): Promise<boolean> {
+  if (!db) {
+    logger.error("markAlertAsRead: Firestore 'db' instance is not initialized. Cannot mark alert.");
+    return false;
+  }
   const alertRef = doc(db, 'alerts', alertId);
   try {
     await updateDoc(alertRef, { isRead: true });
@@ -197,6 +235,10 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
 // --- Data Operations (Firestore) ---
 
 export async function getVehicles(): Promise<Vehicle[]> {
+  if (!db) {
+    logger.error("getVehicles: Firestore 'db' instance is not initialized. Cannot fetch vehicles.");
+    return [];
+  }
   logger.debug('Fetching all vehicles...');
   try {
     const vehiclesCol = collection(db, 'vehicles');
@@ -241,6 +283,10 @@ export async function getVehicles(): Promise<Vehicle[]> {
 }
 
 export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
+  if (!db) {
+    logger.error(`getVehicleById: Firestore 'db' instance is not initialized. Cannot fetch vehicle ${id}.`);
+    return undefined;
+  }
   logger.debug(`Fetching vehicle by ID: ${id}`);
   try {
     const vehicleRef = doc(db, 'vehicles', id);
@@ -297,6 +343,11 @@ export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
 }
 
 export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>): Promise<Vehicle> {
+  if (!db) {
+    const errorMsg = "addVehicle: Firestore 'db' instance is not initialized. Cannot add vehicle.";
+    logger.error(errorMsg, { vehicleData });
+    throw new Error(errorMsg);
+  }
   logger.info('Adding new vehicle:', { registrationNumber: vehicleData.registrationNumber });
   const now = Timestamp.now();
   const nowISO = formatISO(now.toDate());
@@ -364,6 +415,10 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 }
 
 export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>>): Promise<Vehicle | undefined> {
+  if (!db) {
+    logger.error(`updateVehicle: Firestore 'db' instance is not initialized. Cannot update vehicle ${id}.`);
+    return undefined;
+  }
   logger.info(`Updating vehicle ${id}:`, updates);
   try {
     const vehicleRef = doc(db, 'vehicles', id);
@@ -409,6 +464,10 @@ export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, '
 }
 
 export async function deleteVehicle(id: string): Promise<boolean> {
+  if (!db) {
+    logger.error(`deleteVehicle: Firestore 'db' instance is not initialized. Cannot delete vehicle ${id}.`);
+    return false;
+  }
   logger.info(`Attempting to delete vehicle ${id}`);
   try {
     const vehicleRef = doc(db, 'vehicles', id);
@@ -457,6 +516,10 @@ export async function addOrUpdateDocument(
     aiConfidence?: number | null;   // This is for expiryDateConfidence
   }
 ): Promise<Vehicle | undefined> {
+  if (!db) {
+    logger.error(`addOrUpdateDocument: Firestore 'db' instance is not initialized. Cannot process document for vehicle ${vehicleId}.`);
+    return undefined;
+  }
   logger.info(`Adding/updating document for vehicle ${vehicleId}:`, { type: docData.type, name: docData.documentName });
   try {
     const vehicleRef = doc(db, 'vehicles', vehicleId);
@@ -492,7 +555,7 @@ export async function addOrUpdateDocument(
       aiExtractedDate: docData.aiExtractedDate || null,
       aiConfidence: docData.aiConfidence === undefined ? null : docData.aiConfidence,
     };
-    
+
     // Remove placeholder "Missing" document if this new document is for the same type
     if (newDocument.expiryDate) {
         documents = documents.filter(d =>
@@ -549,6 +612,16 @@ export async function addOrUpdateDocument(
 
 // --- Summary Stats ---
 export async function getSummaryStats(): Promise<SummaryStats> {
+  if (!db) {
+    logger.error("[DATA] getSummaryStats: Firestore 'db' instance is not initialized. Cannot generate stats.");
+    // Return a default/empty SummaryStats object to prevent crashes
+    return {
+      totalVehicles: 0, compliantVehicles: 0, expiringSoonDocuments: 0, overdueDocuments: 0,
+      expiringInsurance: 0, overdueInsurance: 0, expiringFitness: 0, overdueFitness: 0,
+      expiringPUC: 0, overduePUC: 0, expiringAITP: 0, overdueAITP: 0,
+      vehicleComplianceBreakdown: { compliant: 0, expiringSoon: 0, overdue: 0, missingInfo: 0, total: 0 },
+    };
+  }
   logger.info('[DATA] getSummaryStats called');
   try {
     const allVehicles = await getVehicles(); // This itself has try-catch
@@ -606,7 +679,7 @@ export async function getSummaryStats(): Promise<SummaryStats> {
           const latestDoc = getLatestDocumentForType(vehicle, docTypeForLookup, customTypeNameForLookup);
           if (latestDoc && latestDoc.expiryDate) {
               const status = getDocumentComplianceStatus(latestDoc.expiryDate);
-              
+
               // Determine which key to use in docTypeCounts
               let countKey: DocumentType | 'OtherCustom' = latestDoc.type;
               if (latestDoc.type === 'Other') {
@@ -711,6 +784,10 @@ export async function getAuditLogs(filters?: {
   dateFrom?: string; // ISO Date string yyyy-MM-dd
   dateTo?: string;   // ISO Date string yyyy-MM-dd
 }): Promise<AuditLogEntry[]> {
+  if (!db) {
+    logger.error("getAuditLogs: Firestore 'db' instance is not initialized. Cannot fetch audit logs.");
+    return [];
+  }
   try {
     const auditLogsColRef = collection(db, "auditLogs");
     const queryConstraints: QueryConstraint[] = [orderBy('timestamp', 'desc')]; // Default sort
@@ -753,6 +830,10 @@ export async function getAuditLogs(filters?: {
 }
 
 export async function recordCsvExportAudit(reportName: string, formatUsed: string, filtersApplied: Record<string, any>) {
+  if (!db) {
+    logger.error("recordCsvExportAudit: Firestore 'db' instance is not initialized. Cannot record audit for CSV export.");
+    return;
+  }
   await internalLogAuditEvent('EXPORT_REPORT', 'REPORT', undefined, {
     reportName,
     format: formatUsed,
@@ -788,6 +869,10 @@ export async function getReportableDocuments(
     documentTypes?: DocumentType[]
   }
 ): Promise<ReportableDocument[]> {
+  if (!db) {
+    logger.error("getReportableDocuments: Firestore 'db' instance is not initialized. Cannot fetch reportable documents.");
+    return [];
+  }
   logger.info('Fetching reportable documents with filters:', { filters });
   try {
     const allVehicles = await getVehicles();
@@ -818,8 +903,10 @@ export async function getReportableDocuments(
               allExpectedDocTypeKeys.add(`Other:${doc.customTypeName}`);
           }
       });
-      if (!(vehicle.documents || []).some(d => d.type === 'Other' && !d.customTypeName)) { // If no generic 'Other' exists, add it to expected set
-          allExpectedDocTypeKeys.add('Other');
+      // Ensure a key for generic 'Other' (no customTypeName) is considered if vehicle has such docs or if it's a standard type.
+      // If the vehicle has 'Other' docs without a customTypeName, or if it's generally an expected type.
+      if ( (vehicle.documents || []).some(d => d.type === 'Other' && !d.customTypeName) || DOCUMENT_TYPES.includes('Other')) {
+          allExpectedDocTypeKeys.add('Other:GENERIC');
       }
 
 
@@ -879,7 +966,7 @@ export async function getReportableDocuments(
         }
       });
     });
-    
+
     // Sort final list
     const sorted = reportableDocs.sort((a, b) => {
       const statusOrderValue = (s: ReportableDocument['status']) => ({ 'Overdue': 1, 'ExpiringSoon': 2, 'Missing': 3, 'Compliant': 4 }[s] || 5);
@@ -901,3 +988,5 @@ export async function getReportableDocuments(
     return [];
   }
 }
+
+
