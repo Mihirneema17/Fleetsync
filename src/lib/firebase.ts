@@ -14,8 +14,26 @@ const firebaseConfig = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID, // Optional
 };
 
+// --- TEMPORARY DIAGNOSTIC LOG ---
+// Check your server console (where you run `npm run dev`) for this output.
+// Ensure all values match your Firebase project settings.
+// If values are undefined, your .env file might not be loaded correctly or there's a typo in variable names.
+console.log("Firebase Config Being Used:", firebaseConfig);
+// --- END TEMPORARY DIAGNOSTIC LOG ---
+
 // Initialize Firebase
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+let app;
+if (!getApps().length) {
+  if (!firebaseConfig.projectId) {
+    console.error("Firebase projectId is not defined. Check your .env file and ensure NEXT_PUBLIC_FIREBASE_PROJECT_ID is set.");
+    // Potentially throw an error or handle this case more gracefully
+    // For now, initializing with potentially undefined config will likely lead to Firebase errors downstream.
+  }
+  app = initializeApp(firebaseConfig);
+} else {
+  app = getApp();
+}
+
 const db = getFirestore(app);
 // const auth = getAuth(app); // For later
 // const storage = getStorage(app); // For later
