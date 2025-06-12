@@ -3,7 +3,8 @@ import { Car, FileWarning, ShieldAlert, CheckCircle, ActivitySquare, Leaf, Paper
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { getSummaryStats, getVehicles, getAlerts, getLatestDocumentForType, getDocumentComplianceStatus, getOverallVehicleCompliance } from '@/lib/data';
+import { getSummaryStats, getVehicles, getAlerts, getOverallVehicleCompliance } from '@/lib/data';
+import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; // Updated import
 import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument } from '@/lib/types';
 import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";

@@ -13,15 +13,15 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarSeparator, // Corrected import
+  SidebarSeparator,
   SidebarMenuBadge,
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { SheetTitle } from '@/components/ui/sheet'; 
 import React, { useEffect, useState } from 'react';
-import { getAlerts, getCurrentUser } from '@/lib/data';
 import type { User } from '@/lib/types';
+import { getCurrentUserAction, getUnreadAlertsCountAction } from '@/app/global-actions'; // Updated import
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
@@ -43,11 +43,11 @@ export function SidebarNav() {
   useEffect(() => {
     async function fetchInitialData() {
       try {
-        const user = await getCurrentUser();
+        const user = await getCurrentUserAction();
         setCurrentUser(user);
 
-        const unreadAlerts = await getAlerts(true); // true for onlyUnread
-        setUnreadAlertsCount(unreadAlerts.length);
+        const count = await getUnreadAlertsCountAction();
+        setUnreadAlertsCount(count);
       } catch (error) {
         console.error("Failed to fetch initial sidebar data:", error);
         setUnreadAlertsCount(0); // Default to 0 on error
@@ -57,8 +57,8 @@ export function SidebarNav() {
     
     const intervalId = setInterval(async () => {
         try {
-            const unreadAlerts = await getAlerts(true);
-            setUnreadAlertsCount(unreadAlerts.length);
+            const count = await getUnreadAlertsCountAction();
+            setUnreadAlertsCount(count);
         } catch (error) {
             console.error("Failed to refresh alert count:", error);
         }

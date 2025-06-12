@@ -1,6 +1,7 @@
 
 import { notFound } from 'next/navigation';
-import { getVehicleById, getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/data';
+import { getVehicleById } from '@/lib/data';
+import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; // Updated import
 import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

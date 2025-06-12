@@ -1,4 +1,3 @@
-
 import "server-only"; // Ensures this module is only used on the server
 import fs from 'fs';
 import path from 'path';
@@ -113,4 +112,5 @@ export const logger = {
 };
 
 // Example initial log to confirm logger is active
-logger.info('Server logger initialized.');
+// Removing this top-level call to avoid potential issues with "server-only" module evaluation timing.
+// logger.info('Server logger initialized.');

@@ -18,43 +18,10 @@ import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry
 import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, DATE_FORMAT } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays } from 'date-fns';
 import { logger } from './logger'; // Import the logger
+import { getDocumentComplianceStatus, getLatestDocumentForType } from './utils'; // Import from utils
 
 // --- Helper Functions ---
 const generateId = () => doc(collection(db, '_')).id; // Generate Firestore compatible ID
-
-export const getDocumentComplianceStatus = (expiryDate: string | null): VehicleDocument['status'] => {
-  if (!expiryDate || typeof expiryDate !== 'string' || expiryDate.trim() === '') return 'Missing';
-  const now = new Date();
-  const expDate = parseISO(expiryDate);
-  expDate.setHours(23, 59, 59, 999); // Consider full day for expiry
-  now.setHours(0,0,0,0); // Start of today
-
-  if (isBefore(expDate, now)) return 'Overdue';
-  if (differenceInDays(expDate, now) < EXPIRY_WARNING_DAYS) return 'ExpiringSoon';
-  return 'Compliant';
-};
-
-export const getLatestDocumentForType = (vehicle: Vehicle, docType: DocumentType, customTypeName?: string): VehicleDocument | undefined => {
-  const docsOfType = (vehicle.documents || []).filter(d =>
-      d.type === docType &&
-      (docType !== 'Other' || d.customTypeName === customTypeName) &&
-      d.expiryDate // Only consider documents with an expiry date as active
-  );
-  if (docsOfType.length === 0) return undefined;
-
-  docsOfType.sort((a, b) => {
-      if (a.expiryDate && b.expiryDate) {
-           const expiryDiff = parseISO(b.expiryDate).getTime() - parseISO(a.expiryDate).getTime();
-           if (expiryDiff !== 0) return expiryDiff;
-      } else if (a.expiryDate) {
-          return -1;
-      } else if (b.expiryDate) {
-          return 1;
-      }
-      return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
-  });
-  return docsOfType[0];
-};
 
 async function internalLogAuditEvent(
   action: AuditLogAction,

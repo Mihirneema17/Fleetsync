@@ -21,7 +21,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/data';
+import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; // Updated import
 import type { Vehicle, DocumentType, VehicleDocument } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {

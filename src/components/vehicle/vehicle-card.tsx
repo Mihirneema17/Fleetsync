@@ -3,7 +3,7 @@ import type { Vehicle } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Car, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
-import { getDocumentComplianceStatus } from '@/lib/data'; // Assuming this can be used on client
+import { getDocumentComplianceStatus } from '@/lib/utils'; // Updated import
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { differenceInDays, parseISO, formatISO } from 'date-fns';
