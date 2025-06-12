@@ -13,7 +13,7 @@ interface SummaryCardProps {
 
 export function SummaryCard({ title, value, icon: Icon, description, className, iconClassName }: SummaryCardProps) {
   return (
-    <Card className={cn("shadow-md hover:shadow-lg transition-shadow duration-300", className)}>
+    <Card className={cn("shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1", className)}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground font-body">{title}</CardTitle>
         <Icon className={cn("h-5 w-5 text-muted-foreground", iconClassName)} />
