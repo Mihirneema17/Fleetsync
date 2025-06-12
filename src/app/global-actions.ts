@@ -2,28 +2,37 @@
 'use server';
 
 import { getAlerts, getCurrentUser } from '@/lib/data';
-import type { User, Alert } from '@/lib/types'; // Assuming Alert type is needed for full getAlerts, though we only need count
+import type { User } from '@/lib/types'; // Alert type removed as not directly used for return type here
 import { logger } from '@/lib/logger';
 
 
 export async function getUnreadAlertsCountAction(): Promise<number> {
+  logger.info('[SA_START] getUnreadAlertsCountAction');
   try {
     const unreadAlerts = await getAlerts(true); // true for onlyUnread
-    return unreadAlerts.length;
+    const count = unreadAlerts.length;
+    logger.info(`[SA_SUCCESS] getUnreadAlertsCountAction - Returning count: ${count}`);
+    return count;
   } catch (error) {
-    logger.error('Error in getUnreadAlertsCountAction:', error);
-    // Return a default value in case of error to prevent unhandled server exceptions
-    // from causing an "unexpected response" on the client.
+    logger.error('[SA_ERROR] Error in getUnreadAlertsCountAction:', error);
+    logger.info('[SA_FAIL] getUnreadAlertsCountAction - Returning default: 0');
     return 0;
   }
 }
 
 export async function getCurrentUserAction(): Promise<User | null> {
+  logger.info('[SA_START] getCurrentUserAction');
   try {
-    return await getCurrentUser();
+    const user = await getCurrentUser();
+    if (user) {
+      logger.info(`[SA_SUCCESS] getCurrentUserAction - Returning user ID: ${user.id}, Role: ${user.role}`);
+    } else {
+      logger.info('[SA_SUCCESS] getCurrentUserAction - Returning null user');
+    }
+    return user;
   } catch (error) {
-    logger.error('Error in getCurrentUserAction:', error);
-    // Return null or handle error as appropriate to prevent "unexpected response"
+    logger.error('[SA_ERROR] Error in getCurrentUserAction:', error);
+    logger.info('[SA_FAIL] getCurrentUserAction - Returning default: null');
     return null;
   }
 }
