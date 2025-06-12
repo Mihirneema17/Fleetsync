@@ -5,11 +5,12 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
 import { Button } from '@/components/ui/button';
-import { UploadCloud } from 'lucide-react';
+import { UploadCloud, FilePlus2 } from 'lucide-react';
 import { DocumentUploadModal } from '@/components/document/document-upload-modal';
 import { useToast } from '@/hooks/use-toast';
 import { addOrUpdateDocument } from '@/lib/data'; // Direct import of server action
 import type { ExtractExpiryDateInput, ExtractExpiryDateOutput } from '@/ai/flows/extract-expiry-date';
+import { DOCUMENT_TYPES } from '@/lib/constants'; // Import document types
 
 interface VehicleDocumentManagerProps {
   vehicle: Vehicle;
@@ -18,11 +19,11 @@ interface VehicleDocumentManagerProps {
 
 export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: VehicleDocumentManagerProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType } | null>(null);
+  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string } | null>(null);
   const router = useRouter();
   const { toast } = useToast();
 
-  const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType }) => {
+  const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string }) => {
     setEditingDocumentContext(docContext || { type: 'Insurance' }); // Default to Insurance if no context
     setIsModalOpen(true);
   };
@@ -47,7 +48,6 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: Vehicle
   ) => {
     if (!vehicle) return;
     try {
-      // Call the server action directly
       const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
         type: data.documentType,
         customTypeName: data.customTypeName,
@@ -65,8 +65,8 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: Vehicle
       });
 
       if (updatedVehicle) {
-        toast({ title: 'Success', description: `Document for ${data.documentType} added successfully.` });
-        router.refresh(); // Revalidate data for the current page
+        toast({ title: 'Success', description: `Document for ${data.documentType === 'Other' && data.customTypeName ? data.customTypeName : data.documentType} added successfully.` });
+        router.refresh(); 
       } else {
         throw new Error('Failed to update vehicle from server');
       }
@@ -78,11 +78,29 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: Vehicle
     }
   };
 
+  const predefinedDocTypes = DOCUMENT_TYPES.filter(type => type !== 'Other');
+
   return (
     <>
-      <div className="flex justify-end mb-4">
-        <Button onClick={() => handleOpenUploadModal()}>
-          <UploadCloud className="mr-2 h-4 w-4" /> Upload New Document
+      <div className="flex flex-wrap justify-end gap-2 mb-4">
+        {predefinedDocTypes.map(docType => (
+          <Button 
+            key={docType}
+            variant="outline"
+            size="sm"
+            onClick={() => handleOpenUploadModal({ type: docType })}
+            className="flex-shrink-0"
+          >
+            <UploadCloud className="mr-2 h-4 w-4" /> Upload New {docType}
+          </Button>
+        ))}
+        <Button 
+            variant="outline"
+            size="sm"
+            onClick={() => handleOpenUploadModal({ type: 'Other' })}
+            className="flex-shrink-0"
+        >
+            <FilePlus2 className="mr-2 h-4 w-4" /> Upload Other Document
         </Button>
       </div>
 
