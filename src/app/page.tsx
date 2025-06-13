@@ -1,10 +1,12 @@
 
-import { Car, FileWarning, ShieldAlert, CheckCircle, ActivitySquare, Leaf, Paperclip, PieChart as PieChartLucideIcon, AlertCircle as AlertCircleLucide } from 'lucide-react'; // Renamed PieChart to PieChartLucideIcon
+"use client"; // Convert to client component to use hooks for potential redirection
+
+import { Car, FileWarning, ShieldAlert, CheckCircle, ActivitySquare, Leaf, Paperclip, PieChart as PieChartLucideIcon, AlertCircle as AlertCircleLucide, Loader2 } from 'lucide-react';
 import { SummaryCard } from '@/components/dashboard/summary-card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { getSummaryStats, getVehicles, getAlerts, getOverallVehicleCompliance } from '@/lib/data';
-import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; // Updated import
+import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils';
 import type { Vehicle, Alert as AlertType, SummaryStats, DocumentType, VehicleDocument } from '@/lib/types';
 import { VehicleCard } from '@/components/vehicle/vehicle-card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -16,8 +18,10 @@ import { formatDistanceToNow, parseISO, differenceInDays, format } from 'date-fn
 import { DATE_FORMAT, DOCUMENT_TYPES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { SmartIngestTrigger } from '@/components/dashboard/smart-ingest-trigger';
-import { CompliancePieChart } from '@/components/dashboard/compliance-pie-chart'; // New import
-
+import { CompliancePieChart } from '@/components/dashboard/compliance-pie-chart';
+import React, { useEffect, useState, useMemo } from 'react'; // Import React hooks
+import { useAuth } from '@/contexts/auth-context'; // Import useAuth
+import { useRouter } from 'next/navigation'; // Import useRouter
 
 interface DocumentAlertItem {
   vehicleId: string;
@@ -32,7 +36,7 @@ interface DocumentAlertItem {
 }
 
 const documentTypeIcons: Record<DocumentType | 'Generic', React.ElementType> = {
-  Insurance: CheckCircle, // Changed from ShieldCheck for consistency or preference
+  Insurance: CheckCircle,
   Fitness: ActivitySquare,
   PUC: Leaf,
   AITP: Paperclip,
@@ -40,8 +44,6 @@ const documentTypeIcons: Record<DocumentType | 'Generic', React.ElementType> = {
   Generic: FileWarning,
 };
 
-
-// Helper function, remains synchronous
 const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docTypeToFilter: DocumentType): DocumentAlertItem[] => {
   const items: DocumentAlertItem[] = [];
   const now = new Date();
@@ -83,25 +85,77 @@ const processVehiclesForDocumentAlerts = (vehicles: Vehicle[], docTypeToFilter: 
   return items.sort((a, b) => a.daysDiff - b.daysDiff);
 };
 
-export default async function DashboardPage() {
-  const [summary, vehiclesData, alertsData] = await Promise.all([
-    getSummaryStats(),
-    getVehicles(), 
-    getAlerts(true) 
-  ]);
+export default function DashboardPage() {
+  const { firebaseUser, isLoading: isAuthLoading } = useAuth();
+  const router = useRouter();
 
-  const recentVehicles = vehiclesData.slice(0, 4);
-  const recentAlerts = alertsData.slice(0, 5);
+  const [summary, setSummary] = useState<SummaryStats | null>(null);
+  const [vehiclesData, setVehiclesData] = useState<Vehicle[]>([]);
+  const [alertsData, setAlertsData] = useState<AlertType[]>([]);
+  const [isLoadingData, setIsLoadingData] = useState(true);
 
-  const documentSections = DOCUMENT_TYPES
+  useEffect(() => {
+    // Initial check handled by AppLayout, this is an additional safeguard for direct navigation
+    if (!isAuthLoading && !firebaseUser) {
+      router.push('/auth/sign-in');
+    } else if (firebaseUser) {
+      const fetchData = async () => {
+        setIsLoadingData(true);
+        try {
+          // Pass firebaseUser.uid to data fetching functions
+          const [summaryRes, vehiclesRes, alertsRes] = await Promise.all([
+            getSummaryStats(firebaseUser.uid),
+            getVehicles(firebaseUser.uid), 
+            getAlerts(firebaseUser.uid, true) // true for unread alerts
+          ]);
+          setSummary(summaryRes);
+          setVehiclesData(vehiclesRes);
+          setAlertsData(alertsRes);
+        } catch (error) {
+          console.error("Failed to fetch dashboard data:", error);
+          // Handle error (e.g., show toast)
+        } finally {
+          setIsLoadingData(false);
+        }
+      };
+      fetchData();
+    }
+  }, [firebaseUser, isAuthLoading, router]);
+
+  const recentVehicles = useMemo(() => vehiclesData.slice(0, 4), [vehiclesData]);
+  const recentAlerts = useMemo(() => alertsData.slice(0, 5), [alertsData]);
+
+  const documentSections = useMemo(() => DOCUMENT_TYPES
     .filter(type => type !== 'Other')
     .map(docType => ({
       title: `${docType} Status`,
       docType: docType,
       items: processVehiclesForDocumentAlerts(vehiclesData, docType),
       icon: documentTypeIcons[docType] || documentTypeIcons.Generic,
-    }));
+    })), [vehiclesData]);
 
+  if (isAuthLoading || (firebaseUser && isLoadingData)) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <Loader2 className="w-16 h-16 text-primary animate-spin mb-4" />
+        <h2 className="text-2xl font-semibold mb-2">Loading Dashboard...</h2>
+        <p className="text-muted-foreground">Please wait while we fetch your data.</p>
+      </div>
+    );
+  }
+  
+  if (!firebaseUser) {
+    // This should ideally be handled by the redirect in AppLayout or the useEffect above,
+    // but as a final fallback:
+    return (
+        <div className="flex flex-col items-center justify-center h-full p-8">
+            <AlertCircleLucide className="w-16 h-16 text-muted-foreground mb-4" />
+            <h2 className="text-2xl font-semibold mb-2">Access Denied</h2>
+            <p className="text-muted-foreground">Please sign in to view the dashboard.</p>
+             <Button onClick={() => router.push('/auth/sign-in')} className="mt-4">Sign In</Button>
+        </div>
+    );
+  }
 
   if (!summary) {
     return (
@@ -273,3 +327,4 @@ export default async function DashboardPage() {
     </div>
   );
 }
+    
