@@ -63,7 +63,7 @@ const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' |
   } else {
      const essentialTypes = ['Insurance', 'Fitness', 'PUC']; // AITP not considered essential for "Missing" badge here
      let missingEssentialCount = 0;
-     for (const type of essentialTypes) {
+     for (const type of essentialTypes as DocumentType[]) {
         if (!getLatestDocumentForType(vehicle, type)?.expiryDate) {
             missingEssentialCount++;
         }
