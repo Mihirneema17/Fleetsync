@@ -80,6 +80,7 @@ export function SidebarNav() {
                     width={32} 
                     height={32} 
                     className="h-8 w-8 object-contain rounded-sm"
+                    data-ai-hint="company logo"
                 />
                 <span className="text-base font-bold font-headline text-primary">Raj Ratan</span>
             </Link>
@@ -92,6 +93,7 @@ export function SidebarNav() {
                 width={36} 
                 height={36} 
                 className="h-9 w-9 object-contain rounded-sm"
+                data-ai-hint="company logo"
             />
             {sidebarState === 'expanded' && (
               <h1 className="text-base font-bold font-headline text-primary truncate">Raj Ratan</h1>
