@@ -18,11 +18,11 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { SheetTitle } from '@/components/ui/sheet'; 
+import { SheetTitle } from '@/components/ui/sheet';
 import React, { useEffect, useState } from 'react';
 import type { User } from '@/lib/types';
 import { getCurrentUserAction, getUnreadAlertsCountAction } from '@/app/global-actions';
-import Image from 'next/image'; // Import Next.js Image component
+import Image from 'next/image';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
@@ -37,7 +37,7 @@ const adminNavItems = [
 
 export function SidebarNav() {
   const pathname = usePathname();
-  const { state: sidebarState, isMobile } = useSidebar();
+  const { state: sidebarState, isMobile, setOpenMobile } = useSidebar(); // Added setOpenMobile
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
@@ -51,11 +51,11 @@ export function SidebarNav() {
         setUnreadAlertsCount(count);
       } catch (error) {
         console.error("Failed to fetch initial sidebar data:", error);
-        setUnreadAlertsCount(0); // Default to 0 on error
+        setUnreadAlertsCount(0);
       }
     }
     fetchInitialData();
-    
+
     const intervalId = setInterval(async () => {
         try {
             const count = await getUnreadAlertsCountAction();
@@ -63,22 +63,27 @@ export function SidebarNav() {
         } catch (error) {
             console.error("Failed to refresh alert count:", error);
         }
-    }, 60000); 
+    }, 60000);
     return () => clearInterval(intervalId);
   }, []);
 
+  const handleLinkClick = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
 
   return (
     <Sidebar side="left" variant="sidebar" collapsible="icon">
       <SidebarHeader className="p-4">
          {isMobile ? (
            <SheetTitle asChild>
-            <Link href="/" className="flex items-center gap-2">
-                <Image 
-                    src="/raj-ratan-logo.png" 
-                    alt="Raj Ratan Tours & Travels Logo" 
-                    width={32} 
-                    height={32} 
+            <Link href="/" className="flex items-center gap-2" onClick={handleLinkClick}>
+                <Image
+                    src="/raj-ratan-logo.png"
+                    alt="Raj Ratan Tours & Travels Logo"
+                    width={32}
+                    height={32}
                     className="h-8 w-8 object-contain rounded-sm"
                     data-ai-hint="company logo"
                 />
@@ -87,11 +92,11 @@ export function SidebarNav() {
            </SheetTitle>
         ) : (
           <Link href="/" className="flex items-center gap-2">
-            <Image 
+            <Image
                 src="/raj-ratan-logo.png"
-                alt="Raj Ratan Tours & Travels Logo" 
-                width={36} 
-                height={36} 
+                alt="Raj Ratan Tours & Travels Logo"
+                width={36}
+                height={36}
                 className="h-9 w-9 object-contain rounded-sm"
                 data-ai-hint="company logo"
             />
@@ -115,6 +120,7 @@ export function SidebarNav() {
                 )}
                 isActive={pathname === item.href || (item.href.startsWith('/reports') && pathname.startsWith('/reports'))}
                 tooltip={sidebarState === 'collapsed' ? item.label : undefined}
+                onClick={handleLinkClick}
               >
                 <Link href={item.href}>
                   <item.icon className="h-5 w-5 mr-3" />
@@ -151,6 +157,7 @@ export function SidebarNav() {
                         )}
                         isActive={pathname.startsWith(item.href)}
                         tooltip={sidebarState === 'collapsed' ? item.label : undefined}
+                        onClick={handleLinkClick}
                     >
                         <Link href={item.href}>
                         <item.icon className="h-5 w-5 mr-3" />
@@ -166,9 +173,11 @@ export function SidebarNav() {
       <SidebarFooter className="p-2">
         <SidebarMenu>
           <SidebarMenuItem>
-             <SidebarMenuButton 
+             <SidebarMenuButton
                 className="w-full justify-start hover:bg-muted"
                 tooltip={sidebarState === 'collapsed' ? "Log Out" : undefined}
+                // onClick={handleLogout} // Future: Add logout functionality
+                onClick={handleLinkClick} // Example, if logout was a link
                 >
                 <LogOut className="h-5 w-5 mr-3" />
                 {sidebarState === 'expanded' && <span className="truncate">Log Out</span>}

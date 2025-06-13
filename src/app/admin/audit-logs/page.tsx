@@ -34,11 +34,12 @@ export default function AuditLogsPage() {
 
   const [actionFilter, setActionFilter] = useState<AuditLogAction | 'All'>(searchParams.get('action') as AuditLogAction || 'All');
   const [entityTypeFilter, setEntityTypeFilter] = useState<AuditLogEntry['entityType'] | 'All'>(searchParams.get('entityType') as AuditLogEntry['entityType'] || 'All');
-  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || ''); 
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>({
     from: searchParams.get('from') ? parseISO(searchParams.get('from')!) : undefined,
     to: searchParams.get('to') ? parseISO(searchParams.get('to')!) : undefined,
   });
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false); // For calendar auto-close
 
   const [sortColumn, setSortColumn] = useState<SortableAuditColumn>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -52,14 +53,14 @@ export default function AuditLogsPage() {
     if (dateRange?.to) currentParams.set('to', format(dateRange.to, 'yyyy-MM-dd'));
     router.push(`${pathname}?${currentParams.toString()}`);
   }, [actionFilter, entityTypeFilter, searchTerm, dateRange, router, pathname]);
-  
+
   useEffect(() => {
     async function fetchData() {
       setIsLoading(true);
       const user = await getCurrentUser();
       setCurrentUser(user);
       if (user?.role !== 'admin') {
-        router.push('/'); 
+        router.push('/');
         return;
       }
 
@@ -73,7 +74,7 @@ export default function AuditLogsPage() {
       setIsLoading(false);
     }
     fetchData();
-  }, [actionFilter, entityTypeFilter, dateRange]); // Removed router from dependencies
+  }, [actionFilter, entityTypeFilter, dateRange, router]); // Added router back, as it's used for redirect
 
   const clientFilteredLogs = useMemo(() => {
     if (!searchTerm) return logs;
@@ -110,7 +111,7 @@ export default function AuditLogsPage() {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortColumn(column);
-      setSortDirection(sortDirection === 'desc' && column === 'timestamp' ? 'desc' : 'asc'); 
+      setSortDirection(sortDirection === 'desc' && column === 'timestamp' ? 'desc' : 'asc');
     }
   };
 
@@ -121,14 +122,25 @@ export default function AuditLogsPage() {
     setDateRange(undefined);
     router.push(pathname || '/admin/audit-logs');
   };
-  
+
   useEffect(() => {
     updateUrlParams();
   }, [updateUrlParams]);
+  
+  const handleDateRangeSelect = (selectedRange: DateRange | undefined) => {
+    setDateRange(selectedRange);
+    if (selectedRange?.from && selectedRange?.to) {
+      setIsCalendarOpen(false); // Close calendar once a full range is selected
+    } else if (selectedRange?.from && !selectedRange?.to && !isCalendarOpen) {
+      // If only 'from' is selected and calendar was closed, reopen to select 'to'
+      // This case might be tricky if user explicitly closes. For now, focus on closing after full range.
+    }
+  };
+
 
   const renderSortIcon = (column: SortableAuditColumn) => {
     if (sortColumn !== column) return <ArrowUpDown className="ml-2 h-3 w-3 opacity-30" />;
-    return sortDirection === 'asc' ? <ArrowUpDown className="ml-2 h-3 w-3" /> : <ArrowUpDown className="ml-2 h-3 w-3" />; // Icons should be ChevronUp/Down
+    return sortDirection === 'asc' ? <ArrowUpDown className="ml-2 h-3 w-3" /> : <ArrowUpDown className="ml-2 h-3 w-3" />;
   };
 
   if (isLoading && !currentUser) {
@@ -163,7 +175,7 @@ export default function AuditLogsPage() {
               <SelectTrigger><SelectValue placeholder="Filter by Entity Type" /></SelectTrigger>
               <SelectContent><SelectItem value="All">All Entity Types</SelectItem>{AUDIT_ENTITY_TYPES.map(opt => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}</SelectContent>
             </Select>
-            <Popover>
+            <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
                 <PopoverTrigger asChild>
                     <Button id="date" variant={"outline"} className={cn("justify-start text-left font-normal h-10",!dateRange && "text-muted-foreground")}>
                         <CalendarIcon className="mr-2 h-4 w-4" />
@@ -171,7 +183,7 @@ export default function AuditLogsPage() {
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={setDateRange} numberOfMonths={2}/>
+                    <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={handleDateRangeSelect} numberOfMonths={2}/>
                 </PopoverContent>
             </Popover>
             <div className="relative flex-grow lg:col-span-1">
@@ -231,4 +243,3 @@ export default function AuditLogsPage() {
     </div>
   );
 }
-

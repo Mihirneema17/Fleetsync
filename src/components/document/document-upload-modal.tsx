@@ -46,8 +46,8 @@ const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
 const formSchema = z.object({
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]]),
-  customTypeName: z.string().optional(),
-  policyNumber: z.string().max(50, "Policy number too long").optional().nullable(),
+  customTypeName: z.string().trim().optional(),
+  policyNumber: z.string().trim().max(50, "Policy number too long").optional().nullable(),
   startDate: z.date().nullable(),
   expiryDate: z.date().nullable(),
   documentFile: z.instanceof(File).optional().nullable(),
@@ -84,6 +84,7 @@ interface DocumentUploadModalProps {
       // documentFile?: File; // File object is not passed to server action for mock
       documentName?: string; // Filename
       documentUrl?: string; // Mock URL
+      // storagePath?: string | null; // Removed
     },
     aiExtractedPolicyNumber?: string | null,
     aiPolicyNumberConfidence?: number | null,
@@ -107,7 +108,7 @@ export function DocumentUploadModal({
 }: DocumentUploadModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExtractingDate, setIsExtractingDate] = useState(false);
-  const [filePreview, setFilePreview] = useState<string | null>(null); // For image preview, not used for PDF
+  const [filePreview, setFilePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const [aiExtractedPolicyNumber, setAiExtractedPolicyNumber] = useState<string | null>(null);
@@ -119,6 +120,9 @@ export function DocumentUploadModal({
 
   const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
+
+  const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
+  const [isExpiryDatePickerOpen, setIsExpiryDatePickerOpen] = useState(false);
 
   const modalTitle = "Upload New Document Version";
 
@@ -159,15 +163,8 @@ export function DocumentUploadModal({
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      // For images, you could set a preview:
-      // if (file.type.startsWith('image/')) {
-      //   setFilePreview(URL.createObjectURL(file));
-      // } else {
-      //   setFilePreview(null);
-      // }
       form.setValue('documentFile', file);
       setAiError(null);
-      // Reset AI fields on new file
       setAiExtractedPolicyNumber(null);
       setAiPolicyNumberConfidence(null);
       setAiExtractedStartDate(null);
@@ -251,7 +248,6 @@ export function DocumentUploadModal({
     }
     setIsSubmitting(true);
     const clientSideDocId = generateClientSideId();
-    // Generate a mock URL. This URL won't actually serve the file.
     const mockDocumentUrl = `/mock-uploads/vehicle_${vehicleId}/doc_${clientSideDocId}/${encodeURIComponent(selectedFile.name)}`;
 
     await onSubmit(
@@ -261,9 +257,8 @@ export function DocumentUploadModal({
         policyNumber: values.policyNumber,
         startDate: values.startDate ? format(values.startDate, 'yyyy-MM-dd') : null,
         expiryDate: values.expiryDate ? format(values.expiryDate, 'yyyy-MM-dd') : null,
-        // documentFile: selectedFile, // Not sending full file object
         documentName: selectedFile.name,
-        documentUrl: mockDocumentUrl, // Pass mock URL
+        documentUrl: mockDocumentUrl,
       },
       aiExtractedPolicyNumber,
       aiPolicyNumberConfidence,
@@ -424,7 +419,7 @@ export function DocumentUploadModal({
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Start Date</FormLabel>
-                      <Popover>
+                      <Popover open={isStartDatePickerOpen} onOpenChange={setIsStartDatePickerOpen}>
                         <PopoverTrigger asChild>
                           <FormControl>
                             <Button
@@ -437,7 +432,15 @@ export function DocumentUploadModal({
                           </FormControl>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                          <Calendar
+                            mode="single"
+                            selected={field.value}
+                            onSelect={(date) => {
+                              field.onChange(date);
+                              setIsStartDatePickerOpen(false);
+                            }}
+                            initialFocus
+                          />
                         </PopoverContent>
                       </Popover>
                       <FormMessage />
@@ -450,7 +453,7 @@ export function DocumentUploadModal({
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Expiry Date *</FormLabel>
-                      <Popover>
+                      <Popover open={isExpiryDatePickerOpen} onOpenChange={setIsExpiryDatePickerOpen}>
                         <PopoverTrigger asChild>
                           <FormControl>
                             <Button
@@ -463,7 +466,15 @@ export function DocumentUploadModal({
                           </FormControl>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                          <Calendar
+                            mode="single"
+                            selected={field.value}
+                            onSelect={(date) => {
+                              field.onChange(date);
+                              setIsExpiryDatePickerOpen(false);
+                            }}
+                            initialFocus
+                          />
                         </PopoverContent>
                       </Popover>
                       <FormMessage />

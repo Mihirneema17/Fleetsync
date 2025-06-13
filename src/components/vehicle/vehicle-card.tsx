@@ -1,3 +1,4 @@
+
 import Link from 'next/link';
 import type { Vehicle } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -54,7 +55,10 @@ export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
   const CurrentStatusIcon = statusConfig[status].icon;
 
   return (
-    <Card className={cn("shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1", statusConfig[status].bgColor)}>
+    <Card className={cn(
+        "shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1.5", // Enhanced hover effect
+        statusConfig[status].bgColor
+      )}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-headline flex items-center">

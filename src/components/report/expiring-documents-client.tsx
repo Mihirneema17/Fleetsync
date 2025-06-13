@@ -70,23 +70,23 @@ export function ExpiringDocumentsReportClient({
 }: ExpiringDocumentsReportClientProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams(); // To read any other params or construct new ones
+  const searchParams = useSearchParams();
   const { toast } = useToast();
 
-  const [isLoading, setIsLoading] = useState(false); // For client-side actions like CSV download if needed
-  
+  const [isLoading, setIsLoading] = useState(false);
+
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatusFilter);
   const [docTypeFilter, setDocTypeFilter] = useState<DocumentTypeFilter>(initialDocTypeFilter);
   const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
   const [dateRange, setDateRange] = React.useState<DateRange | undefined>(initialDateRange);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false); // For calendar auto-close
 
   const [sortColumn, setSortColumn] = useState<SortableColumn>('daysDifference');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
-  // Effect to update URL when server-side filters change
   useEffect(() => {
     const currentParams = new URLSearchParams(searchParams.toString());
-    
+
     if (statusFilter !== (initialStatusFilter)) {
       if (statusFilter === 'All') currentParams.delete('status');
       else currentParams.set('status', statusFilter);
@@ -103,7 +103,6 @@ export function ExpiringDocumentsReportClient({
         if (dateRange?.to) currentParams.set('to', format(dateRange.to, 'yyyy-MM-dd')); else currentParams.delete('to');
     }
 
-    // Only push if params intended for server actually changed or if client-side params changed
     const newQueryString = currentParams.toString();
     const oldQueryString = new URLSearchParams({
         ...(initialStatusFilter !== 'All' && {status: initialStatusFilter}),
@@ -125,7 +124,7 @@ export function ExpiringDocumentsReportClient({
 
     if (searchTerm) {
       const lowerSearchTerm = searchTerm.toLowerCase();
-      filtered = filtered.filter(doc => 
+      filtered = filtered.filter(doc =>
         doc.vehicleRegistration.toLowerCase().includes(lowerSearchTerm) ||
         (doc.type === 'Other' && doc.customTypeName?.toLowerCase().includes(lowerSearchTerm)) ||
         doc.type.toLowerCase().includes(lowerSearchTerm)
@@ -181,13 +180,12 @@ export function ExpiringDocumentsReportClient({
   };
 
   const clearFilters = () => {
-    // These will trigger the useEffect to update URL
-    setStatusFilter('ExpiringSoon'); 
+    setStatusFilter('ExpiringSoon');
     setDocTypeFilter('All');
     setSearchTerm('');
     setDateRange(undefined);
   };
-  
+
   const downloadCSV = async () => {
     if (sortedDocuments.length === 0) {
       toast({ title: "No Data", description: "No data available to export with current filters.", variant: "default" });
@@ -220,11 +218,11 @@ export function ExpiringDocumentsReportClient({
       link.click();
       document.body.removeChild(link);
       toast({ title: "Export Successful", description: "CSV report downloaded."});
-      await recordCsvExportAudit('ExpiringDocuments', 'CSV', { 
-          statusFilter: initialStatusFilter, // Log the server-fetched filter
-          docTypeFilter: initialDocTypeFilter, // Log the server-fetched filter
-          searchTerm, // Log current client-side search term
-          dateRange: dateRange ? {from: dateRange.from && format(dateRange.from, 'yyyy-MM-dd'), to: dateRange.to && format(dateRange.to, 'yyyy-MM-dd')} : undefined 
+      await recordCsvExportAudit('ExpiringDocuments', 'CSV', {
+          statusFilter: initialStatusFilter,
+          docTypeFilter: initialDocTypeFilter,
+          searchTerm,
+          dateRange: dateRange ? {from: dateRange.from && format(dateRange.from, 'yyyy-MM-dd'), to: dateRange.to && format(dateRange.to, 'yyyy-MM-dd')} : undefined
       });
     }
     setIsLoading(false);
@@ -234,8 +232,7 @@ export function ExpiringDocumentsReportClient({
     if (sortColumn !== column) return <ArrowUpDown className="ml-1 h-3 w-3 opacity-30 group-hover:opacity-100" />;
     return sortDirection === 'asc' ? <ChevronUp className="ml-1 h-3 w-3" /> : <ChevronDown className="ml-1 h-3 w-3" />;
   };
-  
-  // Synchronize local state if initial props change (e.g., direct navigation with new query params)
+
   useEffect(() => {
     setStatusFilter(initialStatusFilter);
     setDocTypeFilter(initialDocTypeFilter);
@@ -243,6 +240,12 @@ export function ExpiringDocumentsReportClient({
     setDateRange(initialDateRange);
   }, [initialStatusFilter, initialDocTypeFilter, initialSearchTerm, initialDateRange]);
 
+  const handleDateRangeSelect = (selectedRange: DateRange | undefined) => {
+    setDateRange(selectedRange);
+    if (selectedRange?.from && selectedRange?.to) {
+      setIsCalendarOpen(false); // Close calendar once a full range is selected
+    }
+  };
 
   return (
     <>
@@ -266,7 +269,7 @@ export function ExpiringDocumentsReportClient({
               <SelectTrigger><SelectValue placeholder="Filter by Document Type" /></SelectTrigger>
               <SelectContent>{documentTypeOptions.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}</SelectContent>
             </Select>
-            <Popover>
+            <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
                 <PopoverTrigger asChild>
                     <Button id="date" variant={"outline"} className={cn("justify-start text-left font-normal h-10",!dateRange && "text-muted-foreground")}>
                         <CalendarIcon className="mr-2 h-4 w-4" />
@@ -274,7 +277,14 @@ export function ExpiringDocumentsReportClient({
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={setDateRange} numberOfMonths={2}/>
+                    <Calendar
+                        initialFocus
+                        mode="range"
+                        defaultMonth={dateRange?.from}
+                        selected={dateRange}
+                        onSelect={handleDateRangeSelect}
+                        numberOfMonths={2}
+                    />
                 </PopoverContent>
             </Popover>
             <div className="relative flex-grow lg:col-span-1">
@@ -289,7 +299,7 @@ export function ExpiringDocumentsReportClient({
             </div>
         </CardHeader>
         <CardContent>
-          {initialDocuments.length === 0 && searchTerm === '' && !dateRange?.from && !dateRange?.to ? ( // Check if server returned no docs and no client filters applied
+          {initialDocuments.length === 0 && searchTerm === '' && !dateRange?.from && !dateRange?.to ? (
             <div className="text-center py-12 text-muted-foreground">
               <ClipboardList className="mx-auto h-16 w-16 mb-4" />
               <p className="text-xl font-semibold">No documents match the server filters.</p>

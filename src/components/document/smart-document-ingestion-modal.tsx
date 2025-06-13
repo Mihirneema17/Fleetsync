@@ -47,14 +47,13 @@ import { useRouter } from 'next/navigation';
 
 const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
-// Schema for the form the user interacts with, potentially corrected from AI suggestions
 const smartIngestFormSchema = z.object({
-  vehicleRegistrationNumber: z.string().min(1, "Vehicle registration is required.").max(20, "Registration number too long.").nullable(),
+  vehicleRegistrationNumber: z.string().trim().min(1, "Vehicle registration is required.").max(20, "Registration number too long.").regex(/^[A-Z0-9]+$/, "Registration number must be alphanumeric and uppercase.").nullable(),
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]], {
     required_error: "Document type is required.",
   }),
-  customTypeName: z.string().max(50, "Custom type name too long.").optional().nullable(),
-  policyNumber: z.string().max(50, "Policy number too long.").optional().nullable(),
+  customTypeName: z.string().trim().max(50, "Custom type name too long.").optional().nullable(),
+  policyNumber: z.string().trim().max(50, "Policy number too long.").optional().nullable(),
   startDate: z.date().optional().nullable(),
   expiryDate: z.date().nullable().refine(val => val !== null, { message: "Expiry date is required." }),
 }).refine(data => {
@@ -94,6 +93,9 @@ export function SmartDocumentIngestionModal({
   const { toast } = useToast();
   const router = useRouter();
 
+  const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
+  const [isExpiryDatePickerOpen, setIsExpiryDatePickerOpen] = useState(false);
+
   const form = useForm<SmartIngestFormValues>({
     resolver: zodResolver(smartIngestFormSchema),
     defaultValues: {
@@ -105,25 +107,25 @@ export function SmartDocumentIngestionModal({
       expiryDate: null,
     },
   });
-  
+
   const watchDocumentType = form.watch("documentType");
 
   useEffect(() => {
     if (aiResults) {
       form.reset({
-        vehicleRegistrationNumber: aiResults.vehicleRegistrationNumber,
+        vehicleRegistrationNumber: aiResults.vehicleRegistrationNumber ? aiResults.vehicleRegistrationNumber.toUpperCase() : null,
         documentType: aiResults.documentTypeSuggestion && DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType)
           ? aiResults.documentTypeSuggestion as DocumentType
-          : 'Other', 
-        customTypeName: (aiResults.documentTypeSuggestion === 'Other' || aiResults.documentTypeSuggestion === 'Unknown') 
-          ? aiResults.customTypeNameSuggestion 
+          : 'Other',
+        customTypeName: (aiResults.documentTypeSuggestion === 'Other' || aiResults.documentTypeSuggestion === 'Unknown')
+          ? aiResults.customTypeNameSuggestion
           : (aiResults.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ? aiResults.documentTypeSuggestion : null),
         policyNumber: aiResults.policyNumber,
         startDate: aiResults.startDate && isValid(parseISO(aiResults.startDate)) ? parseISO(aiResults.startDate) : null,
         expiryDate: aiResults.expiryDate && isValid(parseISO(aiResults.expiryDate)) ? parseISO(aiResults.expiryDate) : null,
       });
     } else {
-      form.reset({ // Reset to defaults if aiResults is null (e.g. new file selected or modal opened fresh)
+      form.reset({
         vehicleRegistrationNumber: null,
         documentType: 'Insurance',
         customTypeName: null,
@@ -132,13 +134,12 @@ export function SmartDocumentIngestionModal({
         expiryDate: null,
       });
     }
-  }, [aiResults, form, isOpen]); // Add isOpen to ensure reset when modal is re-opened
+  }, [aiResults, form, isOpen]);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     setAiResults(null);
     setProcessingError(null);
-    // form.reset(); // Reset form when new file is selected - handled by useEffect now
 
     if (file) {
       if (file.size > 10 * 1024 * 1024) { // 10MB limit
@@ -167,7 +168,7 @@ export function SmartDocumentIngestionModal({
     }
     setIsProcessingAI(true);
     setProcessingError(null);
-    setAiResults(null); // Clear previous AI results
+    setAiResults(null);
 
     try {
       const reader = new FileReader();
@@ -219,26 +220,28 @@ export function SmartDocumentIngestionModal({
     setIsSubmittingForm(true);
 
     const clientSideDocId = generateClientSideId();
-    // Generate a mock URL. This URL won't actually serve the file.
     const mockFileDetails = {
       name: selectedFile.name,
       mockUrl: `/mock-uploads/vehicle_smart_ingest/doc_${clientSideDocId}/${encodeURIComponent(selectedFile.name)}`,
     };
+    
+    // Ensure registration number is uppercase
+    const finalRegNumber = values.vehicleRegistrationNumber.toUpperCase();
 
     try {
       const result = await processSmartDocumentAndSave(
-        values.vehicleRegistrationNumber, // Pass reg number separately for easier lookup
-        values, 
-        mockFileDetails, // Pass mock file details
+        finalRegNumber,
+        { ...values, vehicleRegistrationNumber: finalRegNumber },
+        mockFileDetails,
         aiResults
       );
 
       if (result.success) {
         toast({
           title: "Document Saved",
-          description: `Document successfully added to vehicle ${values.vehicleRegistrationNumber}.`,
+          description: `Document successfully added to vehicle ${finalRegNumber}.`,
         });
-        router.refresh(); // Revalidate paths to update data across the app
+        router.refresh();
         resetAndClose();
       } else {
         toast({
@@ -312,7 +315,7 @@ export function SmartDocumentIngestionModal({
               </div>
             )}
 
-            {(aiResults || selectedFile) && !isProcessingAI && ( 
+            {(aiResults || selectedFile) && !isProcessingAI && (
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 pt-4 border-t mt-4">
                    <FormField
@@ -322,7 +325,12 @@ export function SmartDocumentIngestionModal({
                       <FormItem>
                         <FormLabel>Vehicle Registration Number *</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g., MH12AB1234" {...field} value={field.value ?? ''} />
+                          <Input
+                            placeholder="e.g., MH12AB1234"
+                            {...field}
+                            value={field.value ?? ''}
+                            onChange={(e) => field.onChange(e.target.value.toUpperCase())} // Auto-uppercase
+                           />
                         </FormControl>
                         {aiResults?.vehicleRegistrationNumberConfidence !== undefined && <ConfidenceDisplay score={aiResults.vehicleRegistrationNumberConfidence} />}
                         <FormMessage />
@@ -369,7 +377,7 @@ export function SmartDocumentIngestionModal({
                       )}
                     />
                   )}
-                  
+
                   {(watchDocumentType !== 'Other' && aiResults?.customTypeNameSuggestion && aiResults?.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ) && (
                     <FormDescription className="text-xs text-blue-600">
                         AI suggested an original type: '{aiResults.documentTypeSuggestion}'. It has been mapped to 'Other'. Original AI suggested custom name: '{aiResults.customTypeNameSuggestion}'. Please verify.
@@ -391,7 +399,7 @@ export function SmartDocumentIngestionModal({
                       </FormItem>
                     )}
                   />
-                  
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <FormField
                       control={form.control}
@@ -399,7 +407,7 @@ export function SmartDocumentIngestionModal({
                       render={({ field }) => (
                         <FormItem className="flex flex-col">
                           <FormLabel>Start Date</FormLabel>
-                          <Popover>
+                          <Popover open={isStartDatePickerOpen} onOpenChange={setIsStartDatePickerOpen}>
                             <PopoverTrigger asChild>
                               <FormControl>
                                 <Button
@@ -412,7 +420,15 @@ export function SmartDocumentIngestionModal({
                               </FormControl>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                              <Calendar
+                                mode="single"
+                                selected={field.value}
+                                onSelect={(date) => {
+                                  field.onChange(date);
+                                  setIsStartDatePickerOpen(false);
+                                }}
+                                initialFocus
+                              />
                             </PopoverContent>
                           </Popover>
                           {aiResults?.startDateConfidence !== undefined && <ConfidenceDisplay score={aiResults.startDateConfidence} />}
@@ -426,7 +442,7 @@ export function SmartDocumentIngestionModal({
                       render={({ field }) => (
                         <FormItem className="flex flex-col">
                           <FormLabel>Expiry Date *</FormLabel>
-                          <Popover>
+                           <Popover open={isExpiryDatePickerOpen} onOpenChange={setIsExpiryDatePickerOpen}>
                             <PopoverTrigger asChild>
                               <FormControl>
                                 <Button
@@ -439,7 +455,15 @@ export function SmartDocumentIngestionModal({
                               </FormControl>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0" align="start">
-                              <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                              <Calendar
+                                mode="single"
+                                selected={field.value}
+                                onSelect={(date) => {
+                                  field.onChange(date);
+                                  setIsExpiryDatePickerOpen(false);
+                                }}
+                                initialFocus
+                               />
                             </PopoverContent>
                           </Popover>
                           {aiResults?.expiryDateConfidence !== undefined && <ConfidenceDisplay score={aiResults.expiryDateConfidence} />}
@@ -449,7 +473,7 @@ export function SmartDocumentIngestionModal({
                     />
                   </div>
                    <FormDescription className="text-xs italic">
-                     Fields marked with * are required. Please review AI suggestions and correct if necessary before saving.
+                     Fields marked with * are required. Please review AI suggestions and correct if necessary before saving. Registration number will be auto-uppercased.
                    </FormDescription>
                   <DialogFooter className="sm:justify-between pt-4">
                     <DialogClose asChild>
@@ -457,8 +481,8 @@ export function SmartDocumentIngestionModal({
                          Cancel
                        </Button>
                     </DialogClose>
-                    <Button 
-                      type="submit" 
+                    <Button
+                      type="submit"
                       disabled={!selectedFile || isProcessingAI || isSubmittingForm || !form.formState.isValid}
                     >
                       {(isProcessingAI || isSubmittingForm) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" /> }
@@ -470,7 +494,7 @@ export function SmartDocumentIngestionModal({
             )}
           </div>
         </ScrollArea>
-        
+
         {(!selectedFile && !isProcessingAI && !aiResults) && (
              <DialogFooter className="sm:justify-end pt-4">
                  <DialogClose asChild>
