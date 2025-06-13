@@ -22,7 +22,8 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import React from "react";
-import { useAuth } from "@/contexts/auth-context"; // Added import
+import { useAuth } from "@/contexts/auth-context"; 
+import { logger } from "@/lib/logger";
 
 const vehicleFormSchema = z.object({
   registrationNumber: z.string()
@@ -41,7 +42,7 @@ interface VehicleFormProps {
   initialData?: Vehicle | null;
   onSubmit: (
     data: VehicleFormValues,
-    currentUserId: string | null // Updated signature
+    currentUserId: string | null // Ensure this expects currentUserId
   ) => Promise<Vehicle | { error: string } | undefined | void>;
   isEditing?: boolean;
 }
@@ -50,7 +51,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
   const router = useRouter();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const { firebaseUser } = useAuth(); // Get firebaseUser from context
+  const { firebaseUser, isLoading: isAuthLoading } = useAuth(); // Get firebaseUser and its loading state
 
   const defaultValues = initialData
     ? {
@@ -73,8 +74,22 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
 
   const handleFormSubmit = async (data: VehicleFormValues) => {
     setIsSubmitting(true);
+    logger.client.info("VehicleForm: handleFormSubmit triggered.", { isEditing, registrationNumber: data.registrationNumber });
+
+
+    if (isAuthLoading) {
+      logger.client.warn("VehicleForm: Auth state is still loading. Submission deferred.");
+      toast({
+        title: "Please Wait",
+        description: "Authentication check in progress. Please try again shortly.",
+        variant: "default",
+      });
+      setIsSubmitting(false);
+      return;
+    }
 
     if (!firebaseUser?.uid) {
+      logger.client.error("VehicleForm: User not authenticated. Cannot submit form.", { isEditing });
       toast({
         title: "Authentication Error",
         description: "You must be logged in to perform this action.",
@@ -83,15 +98,19 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       setIsSubmitting(false);
       return;
     }
+    
+    logger.client.info("VehicleForm: User authenticated. Proceeding with submission.", { userId: firebaseUser.uid });
 
     try {
       const processedData = {
         ...data,
         registrationNumber: data.registrationNumber.toUpperCase(),
       };
-      const result = await onSubmit(processedData, firebaseUser.uid); // Pass firebaseUser.uid
+      // Pass firebaseUser.uid as the second argument to the onSubmit prop
+      const result = await onSubmit(processedData, firebaseUser.uid); 
 
       if (result && typeof result === 'object' && 'error' in result && result.error) {
+        logger.client.error("VehicleForm: onSubmit returned an error.", { error: result.error });
         throw new Error(result.error);
       }
 
@@ -101,16 +120,16 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       });
 
       router.push("/vehicles");
-      router.refresh();
+      router.refresh(); // Ensures data is re-fetched for the vehicle list
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : `Failed to ${isEditing ? 'update' : 'add'} vehicle.`;
+      logger.client.error("VehicleForm: Form submission error caught.", { errorMessage, errorObj: error });
       toast({
         title: "Error",
         description: errorMessage + " Please try again.",
         variant: "destructive",
       });
-      console.error("Form submission error:", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -197,11 +216,11 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
               )}
             />
             <div className="flex justify-end space-x-3 pt-4">
-              <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>
+              <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting || isAuthLoading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Button type="submit" disabled={isSubmitting || isAuthLoading || !firebaseUser}>
+                {(isSubmitting || isAuthLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isEditing ? "Save Changes" : "Add Vehicle"}
               </Button>
             </div>
