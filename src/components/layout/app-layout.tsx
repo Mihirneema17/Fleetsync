@@ -1,3 +1,6 @@
+
+"use client"; // Add this directive
+
 import React from 'react';
 import { SidebarNav } from './sidebar-nav';
 import { Header } from './header';
