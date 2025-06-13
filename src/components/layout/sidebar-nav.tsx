@@ -75,28 +75,26 @@ export function SidebarNav() {
            <SheetTitle asChild>
             <Link href="/" className="flex items-center gap-2">
                 <Image 
-                    src="https://placehold.co/150x60/E02127/FFFFFF?text=RRT&font=inter" 
-                    alt="Raj Ratan Logo" 
+                    src="/raj-ratan-logo.png" 
+                    alt="Raj Ratan Tours & Travels Logo" 
                     width={32} 
                     height={32} 
                     className="h-8 w-8 object-contain rounded-sm"
-                    data-ai-hint="company logo"
                 />
-                <span className="text-base font-bold font-headline text-red-600">Raj Ratan</span>
+                <span className="text-base font-bold font-headline text-primary">Raj Ratan</span>
             </Link>
            </SheetTitle>
         ) : (
           <Link href="/" className="flex items-center gap-2">
             <Image 
-                src="https://placehold.co/150x60/E02127/FFFFFF?text=RRT&font=inter" 
-                alt="Raj Ratan Logo" 
+                src="/raj-ratan-logo.png"
+                alt="Raj Ratan Tours & Travels Logo" 
                 width={36} 
                 height={36} 
                 className="h-9 w-9 object-contain rounded-sm"
-                data-ai-hint="company logo"
             />
             {sidebarState === 'expanded' && (
-              <h1 className="text-base font-bold font-headline text-red-600 truncate">Raj Ratan</h1>
+              <h1 className="text-base font-bold font-headline text-primary truncate">Raj Ratan</h1>
             )}
           </Link>
         )}
