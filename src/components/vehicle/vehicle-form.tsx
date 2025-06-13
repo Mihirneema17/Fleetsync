@@ -22,13 +22,14 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import React from "react";
+import { useAuth } from "@/contexts/auth-context"; // Added import
 
 const vehicleFormSchema = z.object({
   registrationNumber: z.string()
     .trim()
     .min(3, "Registration number must be at least 3 characters.")
-    .max(15, "Registration number cannot exceed 15 characters.") // Adjusted max length
-    .regex(/^[A-Z0-9]+$/, "Registration number must be alphanumeric and uppercase."), // Basic format enforcement
+    .max(15, "Registration number cannot exceed 15 characters.") 
+    .regex(/^[A-Z0-9]+$/, "Registration number must be alphanumeric and uppercase."),
   type: z.string().trim().min(2, "Vehicle type must be at least 2 characters.").max(50),
   make: z.string().trim().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().trim().min(1, "Model must be at least 1 character.").max(50),
@@ -38,7 +39,10 @@ type VehicleFormValues = z.infer<typeof vehicleFormSchema>;
 
 interface VehicleFormProps {
   initialData?: Vehicle | null;
-  onSubmit: (data: VehicleFormValues) => Promise<Vehicle | { error: string } | undefined | void>;
+  onSubmit: (
+    data: VehicleFormValues,
+    currentUserId: string | null // Updated signature
+  ) => Promise<Vehicle | { error: string } | undefined | void>;
   isEditing?: boolean;
 }
 
@@ -46,6 +50,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
   const router = useRouter();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const { firebaseUser } = useAuth(); // Get firebaseUser from context
 
   const defaultValues = initialData
     ? {
@@ -68,13 +73,23 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
 
   const handleFormSubmit = async (data: VehicleFormValues) => {
     setIsSubmitting(true);
+
+    if (!firebaseUser?.uid) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to perform this action.",
+        variant: "destructive",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      // Uppercase registration number before submitting
       const processedData = {
         ...data,
         registrationNumber: data.registrationNumber.toUpperCase(),
       };
-      const result = await onSubmit(processedData);
+      const result = await onSubmit(processedData, firebaseUser.uid); // Pass firebaseUser.uid
 
       if (result && typeof result === 'object' && 'error' in result && result.error) {
         throw new Error(result.error);
@@ -122,7 +137,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
                     <Input
                       placeholder="e.g., MH12AB3456"
                       {...field}
-                      onChange={(e) => field.onChange(e.target.value.toUpperCase())} // Auto-uppercase
+                      onChange={(e) => field.onChange(e.target.value.toUpperCase())} 
                      />
                   </FormControl>
                   <FormDescription>Enter the vehicle's registration number (e.g., UP16CA0000). It will be auto-uppercased.</FormDescription>
