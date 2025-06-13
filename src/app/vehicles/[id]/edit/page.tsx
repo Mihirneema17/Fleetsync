@@ -32,14 +32,17 @@ export default async function EditVehiclePage({ params }: { params: { id: string
       logger.info(`[SA_INFO] updateVehicle handleSubmitServerAction - Proceeding to call data.updateVehicle for user: ${currentUserId}`, { vehicleId: params.id, registrationNumber: data.registrationNumber });
       const updated = await updateVehicle(params.id, data, currentUserId); 
 
-      if (updated && typeof updated === 'object' && 'error' in updated && updated.error) {
-         logger.error('[SA_ERROR] updateVehicle handleSubmitServerAction - data.updateVehicle returned an error', { error: updated.error, vehicleId: params.id });
-         return { error: updated.error };
+      if (!updated) { // updateVehicle returns undefined on auth failure or if vehicle not found
+         logger.error('[SA_ERROR] updateVehicle handleSubmitServerAction - data.updateVehicle returned undefined, indicating failure or auth issue.', { vehicleId: params.id });
+         // We assume if `currentUserId` was missing, `updateVehicle` would have returned undefined as per its logic.
+         // If updateVehicle threw an error for other reasons, the catch block below handles it.
+         return { error: "Failed to update vehicle. Authorization issue or vehicle not found." };
       }
-      if (!updated) { 
-         logger.error('[SA_ERROR] updateVehicle handleSubmitServerAction - data.updateVehicle returned undefined, indicating failure.', { vehicleId: params.id });
-         return { error: "Failed to update vehicle. Unknown error from data layer." };
-      }
+      // If updateVehicle could return an error object, we'd check:
+      // if (updated && typeof updated === 'object' && 'error' in updated && updated.error) {
+      //    logger.error('[SA_ERROR] updateVehicle handleSubmitServerAction - data.updateVehicle returned an error', { error: updated.error, vehicleId: params.id });
+      //    return { error: updated.error };
+      // }
 
       revalidatePath('/vehicles');
       revalidatePath(`/vehicles/${params.id}`);
@@ -48,6 +51,7 @@ export default async function EditVehiclePage({ params }: { params: { id: string
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while updating the vehicle.";
       logger.error(`[SA_CATCH_ERROR] Failed to update vehicle in server action (ID: ${params.id}):`, error, { currentUserId, originalData: data });
+      // Ensure a serializable error object is returned
       return { error: errorMessage };
     }
   };

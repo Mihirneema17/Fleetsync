@@ -25,20 +25,20 @@ export default function AddVehiclePage() {
       logger.info(`[SA_INFO] addVehicle handleSubmitWithUser - Proceeding to call data.addVehicle for user: ${currentUserId}`, { registrationNumber: data.registrationNumber });
       const newVehicle = await addVehicle(data, currentUserId); // Pass currentUserId to data.addVehicle
       
-      if (newVehicle && 'error' in newVehicle && newVehicle.error) { // Check if newVehicle itself is an error object
-         logger.error('[SA_ERROR] addVehicle handleSubmitWithUser - data.addVehicle returned an error', { error: newVehicle.error, registrationNumber: data.registrationNumber });
-         return { error: newVehicle.error }; // Propagate the error object
-      }
-      if (!newVehicle) { // Handle cases where addVehicle might return undefined without an error object
-        logger.error('[SA_ERROR] addVehicle handleSubmitWithUser - data.addVehicle returned undefined, indicating failure.', { registrationNumber: data.registrationNumber });
-        return { error: "Failed to add vehicle. Unknown error from data layer." };
-      }
+      // The addVehicle function now throws an error if currentUserId is missing,
+      // so we rely on the catch block for that. It returns Vehicle on success.
+      // If it could return an error object, we'd check for it like:
+      // if (newVehicle && typeof newVehicle === 'object' && 'error' in newVehicle && newVehicle.error) {
+      //    logger.error('[SA_ERROR] addVehicle handleSubmitWithUser - data.addVehicle returned an error', { error: newVehicle.error, registrationNumber: data.registrationNumber });
+      //    return { error: newVehicle.error }; 
+      // }
       
       logger.info('[SA_SUCCESS] addVehicle handleSubmitWithUser - Vehicle added successfully', { vehicleId: newVehicle.id, registrationNumber: data.registrationNumber });
       return newVehicle; // Return the new vehicle object
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while adding the vehicle.";
       logger.error('[SA_CATCH_ERROR] Failed to add vehicle in handleSubmitWithUser Server Action', { originalData: data, currentUserId, errorDetails: String(error) });
+      // Ensure a serializable error object is returned
       return { error: errorMessage };
     }
   };
