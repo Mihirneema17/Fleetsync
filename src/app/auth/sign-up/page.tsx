@@ -23,8 +23,8 @@ import Link from "next/link";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { Loader2, UserPlus } from "lucide-react";
-import { createUserProfile } from "@/lib/data"; // Import new function
-import type { FirebaseUser } from "@/lib/types";
+import { createUserProfile } from "@/lib/data"; 
+import type { FirebaseUser as FirebaseUserType } from "@/lib/types"; // Use the aliased FirebaseUser
 
 const signUpFormSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address." }),
@@ -61,9 +61,8 @@ export default function SignUpPage() {
     setIsLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const firebaseUser = userCredential.user as FirebaseUser; // Cast to our FirebaseUser type
+      const firebaseUser = userCredential.user as FirebaseUserType; 
       
-      // Create user profile in Firestore
       if (firebaseUser) {
         await createUserProfile(firebaseUser, values.displayName || undefined);
          toast({
@@ -74,11 +73,11 @@ export default function SignUpPage() {
          toast({
           title: "Account Created (Profile Skipped)",
           description: "Your account has been created, but profile creation was skipped. Redirecting...",
-          variant: "default" // It's not destructive, but a warning would be good if we had it
+          variant: "default" 
         });
       }
       
-      router.push("/"); // Redirect to dashboard or home
+      router.push("/"); 
     } catch (error: any) {
       let errorMessage = "An unexpected error occurred during sign up.";
       if (error.code === "auth/email-already-in-use") {

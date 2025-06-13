@@ -51,7 +51,7 @@ export default function SignInPage() {
         title: "Signed In Successfully",
         description: "Welcome back! Redirecting you to the dashboard.",
       });
-      router.push("/"); // Redirect to dashboard or home
+      router.push("/"); 
     } catch (error: any) {
       let errorMessage = "An unexpected error occurred during sign in.";
       if (error.code === "auth/user-not-found" || error.code === "auth/wrong-password" || error.code === "auth/invalid-credential") {
