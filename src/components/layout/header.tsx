@@ -167,7 +167,7 @@ export function Header() {
     }
   };
   
-  const userDisplayName = currentUser?.displayName || currentUser?.email?.split('@')[0] || "User";
+  const userDisplayName = currentUser?.displayName || (firebaseUser?.email ? firebaseUser.email.split('@')[0] : "User");
   const userAvatarFallback = userDisplayName.substring(0, 2).toUpperCase();
 
 
@@ -286,12 +286,12 @@ export function Header() {
 
         {isAuthLoading ? (
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        ) : currentUser && firebaseUser ? (
+        ) : currentUser || firebaseUser ? ( // Check for either our User or FirebaseUser
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="rounded-full">
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={currentUser.avatarUrl || `https://placehold.co/100x100.png?text=${userAvatarFallback}`} alt={userDisplayName} data-ai-hint="user avatar" />
+                  <AvatarImage src={currentUser?.avatarUrl || `https://placehold.co/100x100.png?text=${userAvatarFallback}`} alt={userDisplayName} data-ai-hint="user avatar" />
                   <AvatarFallback>{userAvatarFallback}</AvatarFallback>
                 </Avatar>
               </Button>
@@ -299,8 +299,8 @@ export function Header() {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>
                 <p className="font-medium">{userDisplayName}</p>
-                <p className="text-xs text-muted-foreground">{currentUser.email}</p>
-                <p className="text-xs text-muted-foreground capitalize mt-1">Role: {currentUser.role}</p>
+                <p className="text-xs text-muted-foreground">{currentUser?.email || firebaseUser?.email}</p>
+                {currentUser?.role && <p className="text-xs text-muted-foreground capitalize mt-1">Role: {currentUser.role}</p>}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled>Profile (Soon)</DropdownMenuItem>
