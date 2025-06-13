@@ -265,6 +265,7 @@ export async function getVehicles(): Promise<Vehicle[]> {
           uploadedAt: doc.uploadedAt || new Date(0).toISOString(),
           documentName: doc.documentName || null,
           documentUrl: doc.documentUrl || null,
+          // storagePath: doc.storagePath || null, // Removed
           aiExtractedPolicyNumber: doc.aiExtractedPolicyNumber || null,
           aiPolicyNumberConfidence: doc.aiPolicyNumberConfidence || null,
           aiExtractedStartDate: doc.aiExtractedStartDate || null,
@@ -313,6 +314,7 @@ export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
           uploadedAt: doc.uploadedAt || new Date(0).toISOString(),
           documentName: doc.documentName || null,
           documentUrl: doc.documentUrl || null,
+          // storagePath: doc.storagePath || null, // Removed
           aiExtractedPolicyNumber: doc.aiExtractedPolicyNumber || null,
           aiPolicyNumberConfidence: doc.aiPolicyNumberConfidence || null,
           aiExtractedStartDate: doc.aiExtractedStartDate || null,
@@ -368,6 +370,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
           uploadedAt: nowISO,
           documentName: null,   // Explicitly null
           documentUrl: null,    // Explicitly null
+          // storagePath: null,    // Explicitly null, and removed
           // AI fields explicitly null
           aiExtractedPolicyNumber: null,
           aiPolicyNumberConfidence: null,
@@ -507,7 +510,8 @@ export async function addOrUpdateDocument(
     startDate?: string | null;
     expiryDate: string | null; // Should always be string here
     documentName?: string | null;
-    documentUrl?: string | null;
+    documentUrl?: string | null; // This will be a mock URL now
+    // storagePath?: string | null; // Removed
     aiExtractedPolicyNumber?: string | null;
     aiPolicyNumberConfidence?: number | null;
     aiExtractedStartDate?: string | null;
@@ -544,8 +548,9 @@ export async function addOrUpdateDocument(
       policyNumber: docData.policyNumber || null,
       startDate: docData.startDate || null,
       expiryDate: docData.expiryDate as string, // Cast as string, form ensures it's present
-      documentUrl: docData.documentUrl || null,
+      documentUrl: docData.documentUrl || null, // Mock URL
       documentName: docData.documentName || null,
+      // storagePath: docData.storagePath || null, // Removed
       status,
       uploadedAt: uploadedAtISO,
       aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber || null,
@@ -988,5 +993,3 @@ export async function getReportableDocuments(
     return [];
   }
 }
-
-

@@ -23,7 +23,7 @@ export async function handleDeleteVehicleServerAction(vehicleId: string) {
 export async function processSmartDocumentAndSave(
   vehicleRegistrationNumber: string,
   formData: SmartIngestFormValues,
-  fileDetails: { name: string; mockUrl: string },
+  fileDetails: { name: string; mockUrl: string }, // Updated to expect mockUrl
   aiResults: SmartIngestOutput | null
 ): Promise<{ success: boolean; error?: string; vehicleId?: string }> {
   try {
@@ -53,7 +53,8 @@ export async function processSmartDocumentAndSave(
       startDate: formData.startDate ? format(formData.startDate, 'yyyy-MM-dd') : null,
       expiryDate: format(formData.expiryDate, 'yyyy-MM-dd'), // Already validated to be non-null
       documentName: fileDetails.name,
-      documentUrl: fileDetails.mockUrl,
+      documentUrl: fileDetails.mockUrl, // Use mockUrl
+      // storagePath: null, // No longer storing storagePath
       // Pass through all AI extracted details from the original AI call
       aiExtractedPolicyNumber: aiResults?.policyNumber,
       aiPolicyNumberConfidence: aiResults?.policyNumberConfidence,
@@ -80,5 +81,3 @@ export async function processSmartDocumentAndSave(
     return { success: false, error: error instanceof Error ? error.message : "An unexpected error occurred during document processing." };
   }
 }
-
-    

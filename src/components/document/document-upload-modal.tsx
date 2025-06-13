@@ -81,7 +81,7 @@ interface DocumentUploadModalProps {
       policyNumber?: string | null;
       startDate?: string | null; // ISO string
       expiryDate: string | null; // ISO string
-      documentFile?: File; // For actual upload later
+      // documentFile?: File; // File object is not passed to server action for mock
       documentName?: string; // Filename
       documentUrl?: string; // Mock URL
     },
@@ -107,7 +107,7 @@ export function DocumentUploadModal({
 }: DocumentUploadModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExtractingDate, setIsExtractingDate] = useState(false);
-  const [filePreview, setFilePreview] = useState<string | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null); // For image preview, not used for PDF
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const [aiExtractedPolicyNumber, setAiExtractedPolicyNumber] = useState<string | null>(null);
@@ -159,7 +159,12 @@ export function DocumentUploadModal({
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setFilePreview(URL.createObjectURL(file));
+      // For images, you could set a preview:
+      // if (file.type.startsWith('image/')) {
+      //   setFilePreview(URL.createObjectURL(file));
+      // } else {
+      //   setFilePreview(null);
+      // }
       form.setValue('documentFile', file);
       setAiError(null);
       // Reset AI fields on new file
@@ -237,7 +242,7 @@ export function DocumentUploadModal({
 
   const processSubmit = async (values: FormValues) => {
     if (!selectedFile) {
-        toast({ title: "File Required", description: "Please select a document file to upload.", variant: "destructive"});
+        toast({ title: "File Required", description: "Please select a document file.", variant: "destructive"});
         return;
     }
     if (!values.expiryDate) {
@@ -246,7 +251,8 @@ export function DocumentUploadModal({
     }
     setIsSubmitting(true);
     const clientSideDocId = generateClientSideId();
-    const generatedDocumentUrl = `/uploads/mock/vehicle_${vehicleId}/doc_${clientSideDocId}/${selectedFile.name}`;
+    // Generate a mock URL. This URL won't actually serve the file.
+    const mockDocumentUrl = `/mock-uploads/vehicle_${vehicleId}/doc_${clientSideDocId}/${encodeURIComponent(selectedFile.name)}`;
 
     await onSubmit(
       {
@@ -255,9 +261,9 @@ export function DocumentUploadModal({
         policyNumber: values.policyNumber,
         startDate: values.startDate ? format(values.startDate, 'yyyy-MM-dd') : null,
         expiryDate: values.expiryDate ? format(values.expiryDate, 'yyyy-MM-dd') : null,
-        documentFile: selectedFile,
+        // documentFile: selectedFile, // Not sending full file object
         documentName: selectedFile.name,
-        documentUrl: generatedDocumentUrl,
+        documentUrl: mockDocumentUrl, // Pass mock URL
       },
       aiExtractedPolicyNumber,
       aiPolicyNumberConfidence,
@@ -279,7 +285,7 @@ export function DocumentUploadModal({
             {modalTitle}
           </DialogTitle>
           <DialogDescription>
-            Upload a new version or instance of this document. It will be added to the vehicle's history.
+            Upload a new version or instance of this document. It will be added to the vehicle's history. The file itself is not stored, only its metadata.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -354,11 +360,15 @@ export function DocumentUploadModal({
               )}
             />
 
-            {filePreview && selectedFile && (
-              <div className="text-sm text-muted-foreground">
-                Selected file: {selectedFile.name} ({ (selectedFile.size / 1024).toFixed(2) } KB)
-              </div>
+            {filePreview && selectedFile && selectedFile.type.startsWith('image/') && (
+              <img src={filePreview} alt="File preview" className="mt-2 max-h-40 rounded-md border" />
             )}
+            {selectedFile && !selectedFile.type.startsWith('image/') && (
+                 <div className="text-sm text-muted-foreground mt-1">
+                    Selected file: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB) - Preview not available for this file type.
+                 </div>
+            )}
+
 
             {isExtractingDate && (
               <div className="flex items-center space-x-2 text-sm text-primary p-2 bg-primary/10 rounded-md">
@@ -483,5 +493,3 @@ export function DocumentUploadModal({
     </Dialog>
   );
 }
-
-    

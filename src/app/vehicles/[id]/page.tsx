@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2, History, Info } from 'lucide-react';
+import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2, History, Info, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
@@ -136,7 +136,7 @@ export default async function VehicleDetailPage({ params }: VehicleDetailPagePro
       <Card className="shadow-md">
         <CardHeader>
           <CardTitle className="font-headline flex items-center"><History className="mr-2 h-5 w-5" />Compliance Document History</CardTitle>
-          <CardDescription>View and manage all historical and current documents for this vehicle.</CardDescription>
+          <CardDescription>View and manage all historical and current documents for this vehicle. Document files are not stored; only metadata is retained.</CardDescription>
         </CardHeader>
         <CardContent>
           {vehicle.documents.filter(d => d.status !== 'Missing' || d.expiryDate).length > 0 ? (
@@ -214,8 +214,31 @@ export default async function VehicleDetailPage({ params }: VehicleDetailPagePro
                                 )}
                             </TableCell>
                             <TableCell className="text-right">
-                              {/* Add New and View Doc buttons moved to VehicleDocumentManager where modal context is needed */}
-                              
+                              {doc.documentUrl ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" asChild className="h-7 w-7">
+                                      <a href={doc.documentUrl} target="_blank" rel="noopener noreferrer" aria-label="View document (opens mock link)">
+                                        <ExternalLink className="h-4 w-4" />
+                                      </a>
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    <p>View Document (Mock Link)</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Tooltip>
+                                 <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" disabled>
+                                        <ExternalLink className="h-4 w-4 opacity-50" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    <p>No document link available</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                             </TableCell>
                           </TableRow>
                         );

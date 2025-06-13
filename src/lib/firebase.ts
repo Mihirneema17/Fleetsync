@@ -3,7 +3,8 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { logger } from './logger'; // Import the logger
 // import { getAuth } from 'firebase/auth'; // We can add this later if we implement Firebase Auth
-// import { getStorage } from 'firebase/storage'; // We can add this later for file uploads
+// We are removing Firebase Storage for now to avoid needing a paid plan.
+// import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -65,6 +66,6 @@ try {
 }
 
 // const auth = getAuth(app); // For later
-// const storage = getStorage(app); // For later
+// const storage = getStorage(app); // For later, removed for now
 
-export { db /*, auth, storage */ };
+export { db /*, auth */ }; // Removed storage export

@@ -1,3 +1,4 @@
+
 export type VehicleType = string; // Changed from union to string to allow custom types
 export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
@@ -20,8 +21,9 @@ export interface VehicleDocument {
   policyNumber?: string | null;
   startDate?: string | null;    // ISO Date string
   expiryDate: string | null; // ISO Date string
-  documentUrl?: string | null; // URL to the stored document
+  documentUrl?: string | null; // Mock URL to the stored document
   documentName?: string | null; // Name of the uploaded file
+  // storagePath?: string | null; // Removed as we are not using Firebase Storage for now
   status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing'; // This status is for THIS specific document instance
   uploadedAt: string; // ISO datetime string when this document record was created/uploaded
   

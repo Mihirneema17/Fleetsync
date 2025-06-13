@@ -219,17 +219,17 @@ export function SmartDocumentIngestionModal({
     setIsSubmittingForm(true);
 
     const clientSideDocId = generateClientSideId();
+    // Generate a mock URL. This URL won't actually serve the file.
     const mockFileDetails = {
       name: selectedFile.name,
-      // In a real app, this URL would come from a file upload service
-      mockUrl: `/uploads/mock/vehicle_smart_ingest/doc_${clientSideDocId}/${selectedFile.name}`,
+      mockUrl: `/mock-uploads/vehicle_smart_ingest/doc_${clientSideDocId}/${encodeURIComponent(selectedFile.name)}`,
     };
 
     try {
       const result = await processSmartDocumentAndSave(
         values.vehicleRegistrationNumber, // Pass reg number separately for easier lookup
         values, 
-        mockFileDetails, 
+        mockFileDetails, // Pass mock file details
         aiResults
       );
 
@@ -281,7 +281,7 @@ export function SmartDocumentIngestionModal({
         <DialogHeader>
           <DialogTitle className="font-headline">Smart Document Upload & Review</DialogTitle>
           <DialogDescription>
-            Upload a document. AI will attempt to extract details. Review and correct before saving. Max 10MB. (PDF, JPG, PNG, WEBP)
+            Upload a document. AI will attempt to extract details. Review and correct before saving. Max 10MB. (PDF, JPG, PNG, WEBP). The file itself is not stored.
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[70vh] p-1">
@@ -485,5 +485,3 @@ export function SmartDocumentIngestionModal({
     </Dialog>
   );
 }
-
-    
