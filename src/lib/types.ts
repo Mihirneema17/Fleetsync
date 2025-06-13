@@ -21,9 +21,8 @@ export interface VehicleDocument {
   policyNumber?: string | null;
   startDate?: string | null;    // ISO Date string
   expiryDate: string | null; // ISO Date string
-  documentUrl?: string | null; // Mock URL to the stored document
+  documentUrl?: string | null; // Mock URL
   documentName?: string | null; // Name of the uploaded file
-  // storagePath?: string | null; // Removed as we are not using Firebase Storage for now
   status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing'; // This status is for THIS specific document instance
   uploadedAt: string; // ISO datetime string when this document record was created/uploaded
   
@@ -105,4 +104,14 @@ export interface AuditLogEntry {
 export interface ReportableDocument extends VehicleDocument {
   vehicleRegistration: string;
   daysDifference: number; // positive for days left, negative for days overdue
+}
+
+export interface SearchResultItem {
+  id: string; // Unique ID for the result item (can be vehicle.id or document.id_vehicle.id)
+  type: 'vehicle' | 'document';
+  title: string; // e.g., Vehicle Registration or Document Type
+  description?: string; // e.g., Make Model or Policy Number
+  link: string; // URL to navigate to
+  vehicleId?: string; // To construct document links if needed
+  documentId?: string; // To scroll to document if it's a document result
 }
