@@ -1,3 +1,4 @@
+
 import type { Metadata } from 'next';
 import './globals.css';
 import { AppLayout } from '@/components/layout/app-layout';
@@ -5,8 +6,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: 'FleetSync Compliance',
-  description: 'Manage vehicle compliance efficiently.',
+  title: 'Raj Ratan Tours & Travels - Fleet Management',
+  description: 'Efficiently manage the fleet for Raj Ratan Tours & Travels.',
 };
 
 export default function RootLayout({

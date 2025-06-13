@@ -3,7 +3,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, List, BarChart2, Bell, Settings, Car, FileText, Users, LogOut, ClipboardList, ShieldQuestion, UserCog } from 'lucide-react';
+import { BarChart2, Bell, Car, ClipboardList, LogOut, ShieldQuestion } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Sidebar,
@@ -21,7 +21,8 @@ import { Button } from '@/components/ui/button';
 import { SheetTitle } from '@/components/ui/sheet'; 
 import React, { useEffect, useState } from 'react';
 import type { User } from '@/lib/types';
-import { getCurrentUserAction, getUnreadAlertsCountAction } from '@/app/global-actions'; // Updated import
+import { getCurrentUserAction, getUnreadAlertsCountAction } from '@/app/global-actions';
+import Image from 'next/image'; // Import Next.js Image component
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: BarChart2 },
@@ -73,15 +74,29 @@ export function SidebarNav() {
          {isMobile ? (
            <SheetTitle asChild>
             <Link href="/" className="flex items-center gap-2">
-                <Car className="h-8 w-8 text-primary" />
-                <span className="text-xl font-bold font-headline text-primary">FleetSync</span>
+                <Image 
+                    src="https://placehold.co/150x60/333333/FFFFFF?text=RRT%26T" 
+                    alt="Raj Ratan Tours & Travels Logo" 
+                    width={32} 
+                    height={32} 
+                    className="h-8 w-8 object-contain rounded-sm"
+                    data-ai-hint="company logo"
+                />
+                <span className="text-base font-bold font-headline text-primary">Raj Ratan Tours & Travels</span>
             </Link>
            </SheetTitle>
         ) : (
           <Link href="/" className="flex items-center gap-2">
-            <Car className="h-8 w-8 text-primary" />
+            <Image 
+                src="https://placehold.co/150x60/333333/FFFFFF?text=RRT%26T" 
+                alt="Raj Ratan Tours & Travels Logo" 
+                width={36} 
+                height={36} 
+                className="h-9 w-9 object-contain rounded-sm"
+                data-ai-hint="company logo"
+            />
             {sidebarState === 'expanded' && (
-              <h1 className="text-xl font-bold font-headline text-primary">FleetSync</h1>
+              <h1 className="text-base font-bold font-headline text-primary truncate">Raj Ratan Tours & Travels</h1>
             )}
           </Link>
         )}
