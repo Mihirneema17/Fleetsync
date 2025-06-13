@@ -14,9 +14,11 @@ import {
   Timestamp, // Firestore Timestamp
   writeBatch,
   type QueryConstraint, // Import QueryConstraint
+  limit as firestoreLimit, // Add limit import
+  setDoc, // For setting a document with a specific ID
 } from 'firebase/firestore';
-import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, UserRole, VehicleComplianceStatusBreakdown, ReportableDocument } from './types';
-import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, MOCK_USER_ID, DATE_FORMAT } from './constants';
+import type { Vehicle, VehicleDocument, Alert, SummaryStats, User, AuditLogEntry, AuditLogAction, DocumentType, UserRole, VehicleComplianceStatusBreakdown, ReportableDocument, FirebaseUser } from './types';
+import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, DATE_FORMAT } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays } from 'date-fns';
 import { logger } from './logger'; // Import the logger
 import { getDocumentComplianceStatus, getLatestDocumentForType } from './utils'; // Import from utils
@@ -24,8 +26,7 @@ import { getDocumentComplianceStatus, getLatestDocumentForType } from './utils';
 // Diagnostic check for db initialization
 if (!db) {
   logger.error("[CRITICAL_DATA_INIT_FAILURE] Firestore 'db' instance is NOT initialized at the time of data.ts module evaluation. Firebase setup in firebase.ts likely failed catastrophically. Further Firestore operations will fail.");
-  // Consider throwing an error here if this state should absolutely halt the server:
-  // throw new Error("[CRITICAL_DATA_INIT_FAILURE] Firestore 'db' not available in data.ts.");
+  throw new Error("[CRITICAL_DATA_INIT_FAILURE] Firestore 'db' not available in data.ts.");
 } else {
   logger.info("[DATA_INIT_SUCCESS] Firestore 'db' instance is confirmed available at data.ts module evaluation.");
 }
@@ -33,8 +34,6 @@ if (!db) {
 // --- Helper Functions ---
 const generateId = () => {
   if (!db) {
-    // This case should ideally be prevented by the check above or by firebase.ts throwing.
-    // However, as a last resort, log and throw if db is not available here.
     logger.error("generateId: Firestore 'db' instance is not initialized. Cannot generate ID.");
     throw new Error("Firestore 'db' instance not initialized for generateId.");
   }
@@ -44,13 +43,18 @@ const generateId = () => {
 async function internalLogAuditEvent(
   action: AuditLogAction,
   entityType: AuditLogEntry['entityType'],
-  entityId?: string | null, // Allow null
+  userId: string | null, // Added userId parameter
+  entityId?: string | null, 
   details: Record<string, any> = {},
-  entityRegistration?: string | null // Allow null
+  entityRegistration?: string | null
 ) {
   if (!db) {
     logger.error("internalLogAuditEvent: Firestore 'db' instance is not initialized. Audit event cannot be logged.");
     return;
+  }
+  if (!userId) {
+    logger.warn("internalLogAuditEvent: Attempted to log event without a userId. Logging as 'system_unknown'.", { action, entityType });
+    userId = 'system_unknown';
   }
   try {
     const newAuditLogId = generateId();
@@ -64,7 +68,7 @@ async function internalLogAuditEvent(
     const auditLogData = {
       id: newAuditLogId,
       timestamp: Timestamp.now(),
-      userId: MOCK_USER_ID,
+      userId: userId,
       action,
       entityType,
       entityId: entityId === undefined ? null : entityId,
@@ -72,14 +76,14 @@ async function internalLogAuditEvent(
       details: cleanedDetails,
     };
     await addDoc(collection(db, 'auditLogs'), auditLogData);
-    logger.info('Audit event logged successfully', { action, entityType, entityId });
+    logger.info('Audit event logged successfully', { action, entityType, entityId, userId });
   } catch (error) {
-    logger.error("Error logging audit event to Firestore:", error, {action, entityType, entityId, details, entityRegistration});
+    logger.error("Error logging audit event to Firestore:", error, {action, entityType, entityId, details, entityRegistration, userId});
   }
 }
 
 // --- Alerts ---
-async function generateAlertsForVehicle(vehicle: Vehicle) {
+async function generateAlertsForVehicle(vehicle: Vehicle, currentUserId: string | null) {
   if (!db) {
     logger.error("generateAlertsForVehicle: Firestore 'db' instance is not initialized. Alerts cannot be generated.");
     return;
@@ -88,22 +92,27 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
     logger.warn("generateAlertsForVehicle: Invalid vehicle object provided.", { vehicle });
     return;
   }
-  logger.info(`Starting alert generation for vehicle ${vehicle.id}`);
-  try { // Wrap entire function for resilience
+  if (!currentUserId) {
+     logger.warn("generateAlertsForVehicle: No currentUserId provided. Alerts will be associated with 'system_default_user'.");
+     currentUserId = 'system_default_user'; // Fallback, ideally should always have a user
+  }
+  logger.info(`Starting alert generation for vehicle ${vehicle.id} by user ${currentUserId}`);
+  try { 
     const alertsColRef = collection(db, "alerts");
 
     const existingUnreadAlertsQuery = query(alertsColRef,
       where('vehicleId', '==', vehicle.id),
-      where('isRead', '==', false)
+      where('isRead', '==', false),
+      where('userId', '==', currentUserId) // Filter by current user
     );
     const existingUnreadAlertsSnap = await getDocs(existingUnreadAlertsQuery);
     const batch = writeBatch(db);
     existingUnreadAlertsSnap.forEach(alertDoc => {
-        logger.debug(`Deleting existing unread alert ${alertDoc.id} for vehicle ${vehicle.id}`);
+        logger.debug(`Deleting existing unread alert ${alertDoc.id} for vehicle ${vehicle.id} by user ${currentUserId}`);
         batch.delete(alertDoc.ref);
     });
     await batch.commit();
-    logger.info(`Cleared ${existingUnreadAlertsSnap.size} existing unread alerts for vehicle ${vehicle.id}`);
+    logger.info(`Cleared ${existingUnreadAlertsSnap.size} existing unread alerts for vehicle ${vehicle.id} by user ${currentUserId}`);
 
     const uniqueDocTypesToConsider = new Set<string>();
     (vehicle.documents || []).forEach(doc => {
@@ -131,26 +140,25 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
 
       const latestDoc = getLatestDocumentForType(vehicle, docType, customTypeNameForLookup);
 
-      if (latestDoc && latestDoc.expiryDate) { // Ensure expiryDate exists
+      if (latestDoc && latestDoc.expiryDate) { 
         const currentStatus = getDocumentComplianceStatus(latestDoc.expiryDate);
         if (currentStatus === 'ExpiringSoon' || currentStatus === 'Overdue') {
           const newAlertId = generateId();
           const alertMessage = `${latestDoc.type === 'Other' && latestDoc.customTypeName ? latestDoc.customTypeName : latestDoc.type} for ${vehicle.registrationNumber} is ${currentStatus === 'ExpiringSoon' ? `expiring on ${format(parseISO(latestDoc.expiryDate), 'PPP')}` : `overdue since ${format(parseISO(latestDoc.expiryDate), 'PPP')}`}. (Policy: ${latestDoc.policyNumber || 'N/A'}, Uploaded: ${format(parseISO(latestDoc.uploadedAt), 'MMM dd, yyyy')})`;
-          const newAlertData: Omit<Alert, 'id' | 'createdAt' | 'dueDate'> & { createdAt: Timestamp, dueDate: string } = { // Ensure types match Firestore
+          const newAlertData: Omit<Alert, 'id' | 'createdAt' | 'dueDate'> & { createdAt: Timestamp, dueDate: string } = { 
             vehicleId: vehicle.id,
             vehicleRegistration: vehicle.registrationNumber,
             documentType: latestDoc.type,
-            customDocumentTypeName: latestDoc.customDocumentTypeName || null, // Ensure null
-            policyNumber: latestDoc.policyNumber || null, // Ensure null
-            dueDate: latestDoc.expiryDate, // Already a string
+            customDocumentTypeName: latestDoc.customDocumentTypeName || null, 
+            policyNumber: latestDoc.policyNumber || null, 
+            dueDate: latestDoc.expiryDate, 
             message: alertMessage,
             createdAt: Timestamp.now(),
             isRead: false,
-            userId: MOCK_USER_ID,
+            userId: currentUserId,
           };
-          // Create a new document reference with the generated ID for the add operation.
           const alertDocRef = doc(collection(db, 'alerts'), newAlertId);
-          await addDoc(alertsColRef, { id: newAlertId, ...newAlertData }); // Add id explicitly
+          await setDoc(alertDocRef, { id: newAlertId, ...newAlertData }); // Use setDoc with explicit ID
           logger.info(`Generated ${currentStatus} alert for vehicle ${vehicle.id}, doc type ${typeKey}`, { alertId: newAlertId });
         }
       }
@@ -158,35 +166,36 @@ async function generateAlertsForVehicle(vehicle: Vehicle) {
     logger.info(`Finished alert generation for vehicle ${vehicle.id}`);
   } catch (error) {
     logger.error(`Critical error during alert generation for vehicle ${vehicle.id}:`, error);
-    // Do not re-throw, allow main operation to continue
   }
 }
 
-export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
+export async function getAlerts(currentUserId: string | null, onlyUnread: boolean = false, limit?: number): Promise<Alert[]> {
   if (!db) {
     logger.error("[DATA] getAlerts: Firestore 'db' instance is not initialized. Cannot fetch alerts.");
     return [];
   }
-  logger.info(`[DATA] getAlerts called. onlyUnread: ${onlyUnread}`);
+  if (!currentUserId) {
+    logger.warn("[DATA] getAlerts: No currentUserId provided. Returning empty array.");
+    return [];
+  }
+  logger.info(`[DATA] getAlerts called by user ${currentUserId}. onlyUnread: ${onlyUnread}, limit: ${limit}`);
   try {
     const alertsColRef = collection(db, "alerts");
     const queryConstraints: QueryConstraint[] = [
+      where('userId', '==', currentUserId), // Essential: Filter by the current user
       orderBy('createdAt', 'desc')
     ];
 
     if (onlyUnread) {
       queryConstraints.unshift(where('isRead', '==', false));
-      // This userId filter is crucial for matching the composite index
-      queryConstraints.unshift(where('userId', '==', MOCK_USER_ID));
-    } else {
-      // If not filtering by isRead, we still need userId for consistency if other queries rely on it or for general scoping
-      queryConstraints.unshift(where('userId', '==', MOCK_USER_ID));
     }
-
+    if (limit) {
+        queryConstraints.push(firestoreLimit(limit));
+    }
 
     const q = query(alertsColRef, ...queryConstraints);
     const alertSnapshot = await getDocs(q);
-    logger.info(`[DATA] getAlerts fetched ${alertSnapshot.docs.length} alerts.`);
+    logger.info(`[DATA] getAlerts fetched ${alertSnapshot.docs.length} alerts for user ${currentUserId}.`);
 
     return alertSnapshot.docs.map(docSnap => {
       const data = docSnap.data();
@@ -196,37 +205,43 @@ export async function getAlerts(onlyUnread: boolean = false): Promise<Alert[]> {
         vehicleRegistration: data.vehicleRegistration || '',
         documentType: data.documentType || 'Other',
         customDocumentTypeName: data.customDocumentTypeName || undefined,
-        dueDate: data.dueDate, // Assuming dueDate is already a string
+        dueDate: data.dueDate, 
         message: data.message || '',
         createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : new Date(0).toISOString(),
         isRead: data.isRead || false,
-        userId: data.userId || MOCK_USER_ID,
+        userId: data.userId || null,
         policyNumber: data.policyNumber || null,
       } as Alert;
     });
   } catch (error) {
-    logger.error('[DATA] Error fetching alerts from Firestore:', error);
-    return []; // Return empty array on error
+    logger.error(`[DATA] Error fetching alerts for user ${currentUserId} from Firestore:`, error);
+    return []; 
   }
 }
 
-export async function markAlertAsRead(alertId: string): Promise<boolean> {
+export async function markAlertAsRead(alertId: string, currentUserId: string | null): Promise<boolean> {
   if (!db) {
     logger.error("markAlertAsRead: Firestore 'db' instance is not initialized. Cannot mark alert.");
     return false;
   }
+  if (!currentUserId) {
+    logger.warn("markAlertAsRead: No currentUserId provided. Cannot mark alert.");
+    return false;
+  }
   const alertRef = doc(db, 'alerts', alertId);
   try {
-    await updateDoc(alertRef, { isRead: true });
     const alertSnap = await getDoc(alertRef);
-    if (alertSnap.exists()) {
-        const alertData = alertSnap.data();
-        internalLogAuditEvent('MARK_ALERT_READ', 'ALERT', alertId, { documentType: alertData.documentType, vehicleRegistration: alertData.vehicleRegistration }, alertData.vehicleRegistration);
+    if (!alertSnap.exists() || alertSnap.data()?.userId !== currentUserId) {
+        logger.warn(`markAlertAsRead: Alert ${alertId} not found or user ${currentUserId} not authorized.`);
+        return false;
     }
-    logger.info(`Alert ${alertId} marked as read.`);
+    await updateDoc(alertRef, { isRead: true });
+    const alertData = alertSnap.data();
+    internalLogAuditEvent('MARK_ALERT_READ', 'ALERT', currentUserId, alertId, { documentType: alertData.documentType, vehicleRegistration: alertData.vehicleRegistration }, alertData.vehicleRegistration);
+    logger.info(`Alert ${alertId} marked as read by user ${currentUserId}.`);
     return true;
   } catch (error) {
-    logger.error(`Error marking alert ${alertId} as read:`, error);
+    logger.error(`Error marking alert ${alertId} as read by user ${currentUserId}:`, error);
     return false;
   }
 }
@@ -234,15 +249,29 @@ export async function markAlertAsRead(alertId: string): Promise<boolean> {
 
 // --- Data Operations (Firestore) ---
 
-export async function getVehicles(): Promise<Vehicle[]> {
+export async function getVehicles(currentUserId: string | null): Promise<Vehicle[]> {
   if (!db) {
     logger.error("getVehicles: Firestore 'db' instance is not initialized. Cannot fetch vehicles.");
     return [];
   }
-  logger.debug('Fetching all vehicles...');
+   if (!currentUserId) {
+    logger.warn("getVehicles: No currentUserId provided. Returning empty array.");
+    return [];
+  }
+  logger.debug(`Fetching all vehicles for user ${currentUserId}...`);
   try {
     const vehiclesCol = collection(db, 'vehicles');
-    const vehicleSnapshot = await getDocs(query(vehiclesCol, orderBy('registrationNumber')));
+    // Assuming vehicles are user-specific, add a where clause.
+    // If vehicles are global, this where clause would be removed.
+    // For now, let's assume vehicles are associated with the user who created them.
+    // We would need a 'ownerId' or 'userId' field on the vehicle document.
+    // As this field is not there yet, this query will fetch all vehicles.
+    // This needs to be addressed when RBAC is fully implemented.
+    // For now, to allow functionality, we fetch all.
+    // const q = query(vehiclesCol, where('ownerId', '==', currentUserId), orderBy('registrationNumber'));
+    const q = query(vehiclesCol, orderBy('registrationNumber')); // TEMP: Fetching all
+    
+    const vehicleSnapshot = await getDocs(q);
     const vehicleList = vehicleSnapshot.docs.map(docSnap => {
       const data = docSnap.data();
       return {
@@ -265,7 +294,6 @@ export async function getVehicles(): Promise<Vehicle[]> {
           uploadedAt: doc.uploadedAt || new Date(0).toISOString(),
           documentName: doc.documentName || null,
           documentUrl: doc.documentUrl || null,
-          // storagePath: doc.storagePath || null, // Removed
           aiExtractedPolicyNumber: doc.aiExtractedPolicyNumber || null,
           aiPolicyNumberConfidence: doc.aiPolicyNumberConfidence || null,
           aiExtractedStartDate: doc.aiExtractedStartDate || null,
@@ -275,24 +303,30 @@ export async function getVehicles(): Promise<Vehicle[]> {
         })),
       } as Vehicle;
     });
-    logger.info(`Fetched ${vehicleList.length} vehicles.`);
+    logger.info(`Fetched ${vehicleList.length} vehicles for user ${currentUserId} (or globally if ownerId not filtered).`);
     return vehicleList;
   } catch (error) {
-    logger.error('Error fetching vehicles:', error);
+    logger.error(`Error fetching vehicles for user ${currentUserId}:`, error);
     return [];
   }
 }
 
-export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
+export async function getVehicleById(id: string, currentUserId: string | null): Promise<Vehicle | undefined> {
   if (!db) {
     logger.error(`getVehicleById: Firestore 'db' instance is not initialized. Cannot fetch vehicle ${id}.`);
     return undefined;
   }
-  logger.debug(`Fetching vehicle by ID: ${id}`);
+  if (!currentUserId) {
+    logger.warn(`getVehicleById: No currentUserId provided for vehicle ${id}. Access might be restricted.`);
+    // Depending on security model, might return undefined or proceed if vehicles can be public.
+  }
+  logger.debug(`Fetching vehicle by ID: ${id} for user ${currentUserId}`);
   try {
     const vehicleRef = doc(db, 'vehicles', id);
     const vehicleSnap = await getDoc(vehicleRef);
     if (vehicleSnap.exists()) {
+      // Add check here if vehicle has an ownerId and if it matches currentUserId
+      // For now, if it exists, return it.
       const data = vehicleSnap.data();
       const vehicleData = {
         id: vehicleSnap.id,
@@ -314,7 +348,6 @@ export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
           uploadedAt: doc.uploadedAt || new Date(0).toISOString(),
           documentName: doc.documentName || null,
           documentUrl: doc.documentUrl || null,
-          // storagePath: doc.storagePath || null, // Removed
           aiExtractedPolicyNumber: doc.aiExtractedPolicyNumber || null,
           aiPolicyNumberConfidence: doc.aiPolicyNumberConfidence || null,
           aiExtractedStartDate: doc.aiExtractedStartDate || null,
@@ -333,45 +366,48 @@ export async function getVehicleById(id: string): Promise<Vehicle | undefined> {
           return parseISO(b.uploadedAt).getTime() - parseISO(a.uploadedAt).getTime();
         }),
       } as Vehicle;
-      logger.info(`Vehicle ${id} fetched successfully.`);
+      logger.info(`Vehicle ${id} fetched successfully by user ${currentUserId}.`);
       return vehicleData;
     }
     logger.warn(`Vehicle with ID ${id} not found.`);
     return undefined;
   } catch (error) {
-    logger.error(`Error fetching vehicle by ID ${id}:`, error);
+    logger.error(`Error fetching vehicle by ID ${id} for user ${currentUserId}:`, error);
     return undefined;
   }
 }
 
-export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>): Promise<Vehicle> {
+export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>, currentUserId: string | null): Promise<Vehicle> {
   if (!db) {
     const errorMsg = "addVehicle: Firestore 'db' instance is not initialized. Cannot add vehicle.";
     logger.error(errorMsg, { vehicleData });
     throw new Error(errorMsg);
   }
-  logger.info('Adding new vehicle:', { registrationNumber: vehicleData.registrationNumber });
+  if (!currentUserId) {
+    const errorMsg = "addVehicle: No currentUserId provided. Cannot add vehicle.";
+    logger.error(errorMsg, { vehicleData });
+    throw new Error(errorMsg);
+  }
+  logger.info(`Adding new vehicle by user ${currentUserId}:`, { registrationNumber: vehicleData.registrationNumber });
   const now = Timestamp.now();
   const nowISO = formatISO(now.toDate());
 
   try {
     const initialDocuments: VehicleDocument[] = [];
     DOCUMENT_TYPES.forEach(docType => {
-      if (docType !== 'Other') { // Only create placeholders for non-'Other' types
+      if (docType !== 'Other') { 
         initialDocuments.push({
           id: generateId(),
-          vehicleId: '', // Will be updated
+          vehicleId: '', 
           type: docType,
-          customTypeName: null, // Explicitly null
-          policyNumber: null,   // Explicitly null
-          startDate: null,      // Explicitly null
-          expiryDate: null,     // Explicitly null
+          customTypeName: null, 
+          policyNumber: null,  
+          startDate: null,      
+          expiryDate: null,     
           status: 'Missing',
           uploadedAt: nowISO,
-          documentName: null,   // Explicitly null
-          documentUrl: null,    // Explicitly null
-          // storagePath: null,    // Explicitly null, and removed
-          // AI fields explicitly null
+          documentName: null,  
+          documentUrl: null,   
           aiExtractedPolicyNumber: null,
           aiPolicyNumberConfidence: null,
           aiExtractedStartDate: null,
@@ -384,13 +420,14 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 
     const newVehicleDataToStore = {
       ...vehicleData,
-      documents: initialDocuments, // These initially have empty vehicleId
+      ownerId: currentUserId, // Associate vehicle with the user
+      documents: initialDocuments, 
       createdAt: now,
       updatedAt: now,
     };
 
     const docRef = await addDoc(collection(db, 'vehicles'), newVehicleDataToStore);
-    logger.info(`Vehicle added successfully with ID: ${docRef.id}`);
+    logger.info(`Vehicle added successfully by user ${currentUserId} with ID: ${docRef.id}`);
 
     const finalInitialDocuments = initialDocuments.map(d => ({...d, vehicleId: docRef.id}));
     await updateDoc(docRef, { documents: finalInitialDocuments });
@@ -404,25 +441,29 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
       updatedAt: nowISO,
     };
 
-    internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
+    internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', currentUserId, docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
 
-    generateAlertsForVehicle(newVehicleForReturn)
-      .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id}`))
-      .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id}:`, err));
+    generateAlertsForVehicle(newVehicleForReturn, currentUserId)
+      .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id} by user ${currentUserId}`))
+      .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id} by user ${currentUserId}:`, err));
 
     return newVehicleForReturn;
   } catch (error) {
-    logger.error('Error during addVehicle core logic:', error, { vehicleData });
-    throw error; // Re-throw so the Server Action catches it
+    logger.error(`Error during addVehicle core logic by user ${currentUserId}:`, error, { vehicleData });
+    throw error; 
   }
 }
 
-export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>>): Promise<Vehicle | undefined> {
+export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>>, currentUserId: string | null): Promise<Vehicle | undefined> {
   if (!db) {
     logger.error(`updateVehicle: Firestore 'db' instance is not initialized. Cannot update vehicle ${id}.`);
     return undefined;
   }
-  logger.info(`Updating vehicle ${id}:`, updates);
+   if (!currentUserId) {
+    logger.warn(`updateVehicle: No currentUserId provided for vehicle ${id}. Update rejected.`);
+    return undefined; // Or throw an error
+  }
+  logger.info(`Updating vehicle ${id} by user ${currentUserId}:`, updates);
   try {
     const vehicleRef = doc(db, 'vehicles', id);
     const vehicleSnap = await getDoc(vehicleRef);
@@ -430,11 +471,16 @@ export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, '
       logger.warn(`Update failed: Vehicle ${id} not found.`);
       return undefined;
     }
+    // Add owner check here if ownerId field exists and is enforced
+    // if (vehicleSnap.data()?.ownerId !== currentUserId) {
+    //   logger.warn(`User ${currentUserId} not authorized to update vehicle ${id}.`);
+    //   return undefined;
+    // }
 
-    const oldVehicleData = vehicleSnap.data() as Omit<Vehicle, 'id'>; // Assuming Vehicle type structure
+    const oldVehicleData = vehicleSnap.data() as Omit<Vehicle, 'id'>; 
     const updatedDataToStore = { ...updates, updatedAt: Timestamp.now() };
     await updateDoc(vehicleRef, updatedDataToStore);
-    logger.info(`Vehicle ${id} updated successfully.`);
+    logger.info(`Vehicle ${id} updated successfully by user ${currentUserId}.`);
 
     const changedFields: Record<string, any> = {};
     for (const key in updates) {
@@ -450,28 +496,32 @@ export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, '
 
     if (Object.keys(changedFields).length > 0) {
       const currentRegNumber = updates.registrationNumber || (oldVehicleData as Vehicle).registrationNumber;
-      internalLogAuditEvent('UPDATE_VEHICLE', 'VEHICLE', id, { updates: changedFields }, currentRegNumber);
+      internalLogAuditEvent('UPDATE_VEHICLE', 'VEHICLE', currentUserId, id, { updates: changedFields }, currentRegNumber);
     }
 
-    const updatedVehicle = await getVehicleById(id);
+    const updatedVehicle = await getVehicleById(id, currentUserId);
     if (updatedVehicle) {
-      generateAlertsForVehicle(updatedVehicle)
-        .then(() => logger.info(`Background alert generation initiated for updated vehicle ${updatedVehicle.id}`))
-        .catch(err => logger.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id}:`, err));
+      generateAlertsForVehicle(updatedVehicle, currentUserId)
+        .then(() => logger.info(`Background alert generation initiated for updated vehicle ${updatedVehicle.id} by user ${currentUserId}`))
+        .catch(err => logger.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id} by user ${currentUserId}:`, err));
     }
     return updatedVehicle;
   } catch (error) {
-    logger.error(`Error updating vehicle ${id}:`, error, { updates });
-    return undefined; // Or re-throw if the caller should handle it
+    logger.error(`Error updating vehicle ${id} by user ${currentUserId}:`, error, { updates });
+    return undefined; 
   }
 }
 
-export async function deleteVehicle(id: string): Promise<boolean> {
+export async function deleteVehicle(id: string, currentUserId: string | null): Promise<boolean> {
   if (!db) {
     logger.error(`deleteVehicle: Firestore 'db' instance is not initialized. Cannot delete vehicle ${id}.`);
     return false;
   }
-  logger.info(`Attempting to delete vehicle ${id}`);
+  if (!currentUserId) {
+    logger.warn(`deleteVehicle: No currentUserId provided for vehicle ${id}. Deletion rejected.`);
+    return false;
+  }
+  logger.info(`Attempting to delete vehicle ${id} by user ${currentUserId}`);
   try {
     const vehicleRef = doc(db, 'vehicles', id);
     const vehicleSnap = await getDoc(vehicleRef);
@@ -479,24 +529,29 @@ export async function deleteVehicle(id: string): Promise<boolean> {
       logger.warn(`Delete failed: Vehicle ${id} not found.`);
       return false;
     }
+    // Add owner check here
+    // if (vehicleSnap.data()?.ownerId !== currentUserId) {
+    //   logger.warn(`User ${currentUserId} not authorized to delete vehicle ${id}.`);
+    //   return false;
+    // }
 
     const vehicleToDeleteData = vehicleSnap.data() as Vehicle;
 
     await deleteDoc(vehicleRef);
-    logger.info(`Vehicle ${id} deleted from 'vehicles' collection.`);
+    logger.info(`Vehicle ${id} deleted from 'vehicles' collection by user ${currentUserId}.`);
 
     const alertsCol = collection(db, 'alerts');
-    const q = query(alertsCol, where('vehicleId', '==', id));
+    const q = query(alertsCol, where('vehicleId', '==', id), where('userId', '==', currentUserId));
     const alertSnapshot = await getDocs(q);
     const batch = writeBatch(db);
     alertSnapshot.docs.forEach(docSnap => batch.delete(docSnap.ref));
     await batch.commit();
-    logger.info(`Deleted ${alertSnapshot.size} alerts associated with vehicle ${id}.`);
+    logger.info(`Deleted ${alertSnapshot.size} alerts associated with vehicle ${id} for user ${currentUserId}.`);
 
-    internalLogAuditEvent('DELETE_VEHICLE', 'VEHICLE', id, { registrationNumber: vehicleToDeleteData.registrationNumber }, vehicleToDeleteData.registrationNumber);
+    internalLogAuditEvent('DELETE_VEHICLE', 'VEHICLE', currentUserId, id, { registrationNumber: vehicleToDeleteData.registrationNumber }, vehicleToDeleteData.registrationNumber);
     return true;
   } catch (error) {
-    logger.error(`Error deleting vehicle ${id}:`, error);
+    logger.error(`Error deleting vehicle ${id} by user ${currentUserId}:`, error);
     return false;
   }
 }
@@ -508,23 +563,27 @@ export async function addOrUpdateDocument(
     customTypeName?: string | null;
     policyNumber?: string | null;
     startDate?: string | null;
-    expiryDate: string | null; // Should always be string here
+    expiryDate: string | null; 
     documentName?: string | null;
-    documentUrl?: string | null; // This will be a mock URL now
-    // storagePath?: string | null; // Removed
+    documentUrl?: string | null; 
     aiExtractedPolicyNumber?: string | null;
     aiPolicyNumberConfidence?: number | null;
     aiExtractedStartDate?: string | null;
     aiStartDateConfidence?: number | null;
-    aiExtractedDate?: string | null; // This is for expiryDate
-    aiConfidence?: number | null;   // This is for expiryDateConfidence
-  }
+    aiExtractedDate?: string | null; 
+    aiConfidence?: number | null;   
+  },
+  currentUserId: string | null
 ): Promise<Vehicle | undefined> {
   if (!db) {
     logger.error(`addOrUpdateDocument: Firestore 'db' instance is not initialized. Cannot process document for vehicle ${vehicleId}.`);
     return undefined;
   }
-  logger.info(`Adding/updating document for vehicle ${vehicleId}:`, { type: docData.type, name: docData.documentName });
+  if (!currentUserId) {
+    logger.warn(`addOrUpdateDocument: No currentUserId provided for vehicle ${vehicleId}. Document operation rejected.`);
+    return undefined;
+  }
+  logger.info(`Adding/updating document for vehicle ${vehicleId} by user ${currentUserId}:`, { type: docData.type, name: docData.documentName });
   try {
     const vehicleRef = doc(db, 'vehicles', vehicleId);
     const vehicleSnap = await getDoc(vehicleRef);
@@ -532,11 +591,15 @@ export async function addOrUpdateDocument(
       logger.error(`Vehicle not found for adding document: ${vehicleId}`);
       return undefined;
     }
+    // Add owner check for vehicle
+    // if (vehicleSnap.data()?.ownerId !== currentUserId) {
+    //    logger.warn(`User ${currentUserId} not authorized to add document to vehicle ${vehicleId}.`);
+    //    return undefined;
+    // }
 
     const vehicle = { id: vehicleSnap.id, ...vehicleSnap.data() } as Vehicle;
     let documents = vehicle.documents || [];
     const newDocId = generateId();
-    // expiryDate from docData is already a string | null, but form validation should ensure it's not null here
     const status = getDocumentComplianceStatus(docData.expiryDate as string);
     const uploadedAtISO = formatISO(new Date());
 
@@ -547,10 +610,9 @@ export async function addOrUpdateDocument(
       customTypeName: docData.type === 'Other' ? (docData.customTypeName || null) : null,
       policyNumber: docData.policyNumber || null,
       startDate: docData.startDate || null,
-      expiryDate: docData.expiryDate as string, // Cast as string, form ensures it's present
-      documentUrl: docData.documentUrl || null, // Mock URL
+      expiryDate: docData.expiryDate as string, 
+      documentUrl: docData.documentUrl || null, 
       documentName: docData.documentName || null,
-      // storagePath: docData.storagePath || null, // Removed
       status,
       uploadedAt: uploadedAtISO,
       aiExtractedPolicyNumber: docData.aiExtractedPolicyNumber || null,
@@ -561,7 +623,6 @@ export async function addOrUpdateDocument(
       aiConfidence: docData.aiConfidence === undefined ? null : docData.aiConfidence,
     };
 
-    // Remove placeholder "Missing" document if this new document is for the same type
     if (newDocument.expiryDate) {
         documents = documents.filter(d =>
             !(d.type === newDocument.type &&
@@ -587,9 +648,9 @@ export async function addOrUpdateDocument(
       documents: documents,
       updatedAt: Timestamp.now(),
     });
-    logger.info(`Document ${newDocId} added to vehicle ${vehicleId}.`);
+    logger.info(`Document ${newDocId} added to vehicle ${vehicleId} by user ${currentUserId}.`);
 
-    internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', newDocId, {
+    internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', currentUserId, newDocId, {
         vehicleId: vehicleId,
         documentType: newDocument.type,
         customTypeName: newDocument.customTypeName,
@@ -601,25 +662,24 @@ export async function addOrUpdateDocument(
         aiExpiry: newDocument.aiExtractedDate, aiExpiryConf: newDocument.aiConfidence,
     }, vehicle.registrationNumber);
 
-    const finalUpdatedVehicle = await getVehicleById(vehicleId);
+    const finalUpdatedVehicle = await getVehicleById(vehicleId, currentUserId);
     if (finalUpdatedVehicle) {
-      generateAlertsForVehicle(finalUpdatedVehicle)
-        .then(() => logger.info(`Background alert generation initiated for document update on vehicle ${finalUpdatedVehicle.id}`))
-        .catch(err => logger.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id}:`, err));
+      generateAlertsForVehicle(finalUpdatedVehicle, currentUserId)
+        .then(() => logger.info(`Background alert generation initiated for document update on vehicle ${finalUpdatedVehicle.id} by user ${currentUserId}`))
+        .catch(err => logger.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id} by user ${currentUserId}:`, err));
     }
     return finalUpdatedVehicle;
   } catch (error) {
-    logger.error(`Error adding/updating document for vehicle ${vehicleId}:`, error, { docDataType: docData.type });
+    logger.error(`Error adding/updating document for vehicle ${vehicleId} by user ${currentUserId}:`, error, { docDataType: docData.type });
     return undefined;
   }
 }
 
 
 // --- Summary Stats ---
-export async function getSummaryStats(): Promise<SummaryStats> {
+export async function getSummaryStats(currentUserId: string | null): Promise<SummaryStats> {
   if (!db) {
     logger.error("[DATA] getSummaryStats: Firestore 'db' instance is not initialized. Cannot generate stats.");
-    // Return a default/empty SummaryStats object to prevent crashes
     return {
       totalVehicles: 0, compliantVehicles: 0, expiringSoonDocuments: 0, overdueDocuments: 0,
       expiringInsurance: 0, overdueInsurance: 0, expiringFitness: 0, overdueFitness: 0,
@@ -627,9 +687,13 @@ export async function getSummaryStats(): Promise<SummaryStats> {
       vehicleComplianceBreakdown: { compliant: 0, expiringSoon: 0, overdue: 0, missingInfo: 0, total: 0 },
     };
   }
-  logger.info('[DATA] getSummaryStats called');
+   if (!currentUserId) {
+    logger.warn("[DATA] getSummaryStats: No currentUserId provided. Stats will be for all accessible vehicles if not filtered by ownerId, or empty.");
+    // Potentially return zeroed stats or proceed if a global view is intended (and data is structured for it)
+  }
+  logger.info(`[DATA] getSummaryStats called by user ${currentUserId}`);
   try {
-    const allVehicles = await getVehicles(); // This itself has try-catch
+    const allVehicles = await getVehicles(currentUserId); // Pass currentUserId
 
     const vehicleComplianceBreakdown: VehicleComplianceStatusBreakdown = {
       compliant: 0, expiringSoon: 0, overdue: 0, missingInfo: 0, total: allVehicles.length,
@@ -642,8 +706,8 @@ export async function getSummaryStats(): Promise<SummaryStats> {
         Fitness: { expiring: 0, overdue: 0 },
         PUC: { expiring: 0, overdue: 0 },
         AITP: { expiring: 0, overdue: 0 },
-        Other: { expiring: 0, overdue: 0 }, // For generic 'Other' type if no custom name
-        OtherCustom: { expiring: 0, overdue: 0 }, // For specific 'Other' with custom name
+        Other: { expiring: 0, overdue: 0 }, 
+        OtherCustom: { expiring: 0, overdue: 0 }, 
     });
     const docTypeCounts = docTypeStatsTemplate();
 
@@ -659,13 +723,13 @@ export async function getSummaryStats(): Promise<SummaryStats> {
 
       const uniqueActiveDocTypesInVehicle = new Set<string>();
        (vehicle.documents || []).forEach(doc => {
-          if (doc.expiryDate) { // Only consider active documents with an expiry date
+          if (doc.expiryDate) { 
               if (doc.type === 'Other' && doc.customTypeName) {
                   uniqueActiveDocTypesInVehicle.add(`Other:${doc.customTypeName}`);
               } else if (doc.type !== 'Other') {
                   uniqueActiveDocTypesInVehicle.add(doc.type);
-              } else { // 'Other' type without a custom name
-                  uniqueActiveDocTypesInVehicle.add('Other:GENERIC'); // Use a special key for generic Others
+              } else { 
+                  uniqueActiveDocTypesInVehicle.add('Other:GENERIC'); 
               }
           }
       });
@@ -685,7 +749,6 @@ export async function getSummaryStats(): Promise<SummaryStats> {
           if (latestDoc && latestDoc.expiryDate) {
               const status = getDocumentComplianceStatus(latestDoc.expiryDate);
 
-              // Determine which key to use in docTypeCounts
               let countKey: DocumentType | 'OtherCustom' = latestDoc.type;
               if (latestDoc.type === 'Other') {
                 countKey = latestDoc.customTypeName ? 'OtherCustom' : 'Other';
@@ -717,11 +780,10 @@ export async function getSummaryStats(): Promise<SummaryStats> {
       overdueAITP: docTypeCounts['AITP'].overdue,
       vehicleComplianceBreakdown
     };
-    logger.info('[DATA] getSummaryStats successfully computed and returning', { summary: resultSummary });
+    logger.info(`[DATA] getSummaryStats successfully computed for user ${currentUserId} and returning`, { summary: resultSummary });
     return resultSummary;
   } catch (error) {
-    logger.error('[DATA] Error in getSummaryStats:', error);
-    // Return a default/empty SummaryStats object to prevent crashes
+    logger.error(`[DATA] Error in getSummaryStats for user ${currentUserId}:`, error);
     return {
       totalVehicles: 0,
       compliantVehicles: 0,
@@ -756,17 +818,14 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
       }
   }
 
-  // Consider "active" documents as those with an expiry date.
   const activeDocs = (vehicle.documents || []).filter(d => d.expiryDate);
 
-  // If there are no documents with expiry dates AND not all essential types are covered, it's MissingInfo.
   if (activeDocs.length === 0 && essentialDocsPresentAndActive < ESSENTIAL_DOC_TYPES.length) {
     return 'MissingInfo';
   }
 
-  // Iterate through active documents to check for Overdue or ExpiringSoon.
   for (const doc of activeDocs) {
-    if (doc.expiryDate) { // Should always be true due to filter above, but good for safety
+    if (doc.expiryDate) { 
       const status = getDocumentComplianceStatus(doc.expiryDate);
       if (status === 'Overdue') isOverdue = true;
       if (status === 'ExpiringSoon') isExpiringSoon = true;
@@ -775,7 +834,6 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
 
   if (isOverdue) return 'Overdue';
   if (isExpiringSoon) return 'ExpiringSoon';
-  // If not all essential documents have an expiry date, it's MissingInfo.
   if (!hasAllEssentialsWithExpiry && essentialDocsPresentAndActive < ESSENTIAL_DOC_TYPES.length) return 'MissingInfo';
   return 'Compliant';
 };
@@ -783,32 +841,38 @@ export const getOverallVehicleCompliance = (vehicle: Vehicle): 'Compliant' | 'Ex
 
 // --- Audit Logs ---
 export async function getAuditLogs(filters?: {
-  userId?: string;
+  userIdAudit?: string; // Renamed to avoid conflict with potential currentUserId
   entityType?: AuditLogEntry['entityType'];
   action?: AuditLogAction;
   dateFrom?: string; // ISO Date string yyyy-MM-dd
   dateTo?: string;   // ISO Date string yyyy-MM-dd
-}): Promise<AuditLogEntry[]> {
+}, currentUserId?: string | null): Promise<AuditLogEntry[]> { // Added currentUserId for potential admin filtering
   if (!db) {
     logger.error("getAuditLogs: Firestore 'db' instance is not initialized. Cannot fetch audit logs.");
     return [];
   }
+  // Optional: Add admin check here if only admins can view all logs
+  // if (currentUser?.role !== 'admin' && filters?.userIdAudit !== currentUserId) {
+  //   logger.warn("getAuditLogs: Non-admin user attempting to fetch logs for another user. Denied.");
+  //   return [];
+  // }
+
   try {
     const auditLogsColRef = collection(db, "auditLogs");
-    const queryConstraints: QueryConstraint[] = [orderBy('timestamp', 'desc')]; // Default sort
+    const queryConstraints: QueryConstraint[] = [orderBy('timestamp', 'desc')]; 
 
-    if (filters?.userId) queryConstraints.unshift(where('userId', '==', filters.userId));
+    if (filters?.userIdAudit) queryConstraints.unshift(where('userId', '==', filters.userIdAudit));
     if (filters?.entityType) queryConstraints.unshift(where('entityType', '==', filters.entityType));
     if (filters?.action) queryConstraints.unshift(where('action', '==', filters.action));
 
     if (filters?.dateFrom) {
-      const fromDate = parseISO(filters.dateFrom); // Assuming yyyy-MM-dd
-      fromDate.setHours(0,0,0,0); // Start of day
+      const fromDate = parseISO(filters.dateFrom); 
+      fromDate.setHours(0,0,0,0); 
       queryConstraints.unshift(where('timestamp', '>=', Timestamp.fromDate(fromDate)));
     }
     if (filters?.dateTo) {
-      const toDate = parseISO(filters.dateTo); // Assuming yyyy-MM-dd
-      toDate.setHours(23,59,59,999); // End of day
+      const toDate = parseISO(filters.dateTo); 
+      toDate.setHours(23,59,59,999); 
       queryConstraints.unshift(where('timestamp', '<=', Timestamp.fromDate(toDate)));
     }
 
@@ -819,7 +883,7 @@ export async function getAuditLogs(filters?: {
       const data = docSnap.data();
       return {
         id: docSnap.id,
-        timestamp: formatISO((data.timestamp as Timestamp).toDate()), // Ensure ISO string
+        timestamp: formatISO((data.timestamp as Timestamp).toDate()), 
         userId: data.userId || '',
         action: data.action || 'UNKNOWN_ACTION',
         entityType: data.entityType || 'UNKNOWN_ENTITY',
@@ -834,12 +898,12 @@ export async function getAuditLogs(filters?: {
   }
 }
 
-export async function recordCsvExportAudit(reportName: string, formatUsed: string, filtersApplied: Record<string, any>) {
+export async function recordCsvExportAudit(reportName: string, formatUsed: string, filtersApplied: Record<string, any>, currentUserId: string | null) {
   if (!db) {
     logger.error("recordCsvExportAudit: Firestore 'db' instance is not initialized. Cannot record audit for CSV export.");
     return;
   }
-  await internalLogAuditEvent('EXPORT_REPORT', 'REPORT', undefined, {
+  await internalLogAuditEvent('EXPORT_REPORT', 'REPORT', currentUserId, undefined, {
     reportName,
     format: formatUsed,
     filtersApplied: filtersApplied ? JSON.parse(JSON.stringify(filtersApplied, (key, value) => value instanceof Date ? value.toISOString() : value)) : {},
@@ -847,28 +911,100 @@ export async function recordCsvExportAudit(reportName: string, formatUsed: strin
 }
 
 // --- User Data ---
-export async function getCurrentUser(): Promise<User | null> {
-  // This is a mock. In a real app, this would fetch from auth or a users collection.
-  logger.info('[DATA] getCurrentUser called');
+
+export async function createUserProfile(firebaseUser: FirebaseUser, displayName?: string): Promise<User> {
+  if (!db) {
+    const errorMsg = "createUserProfile: Firestore 'db' instance is not initialized.";
+    logger.error(errorMsg, { uid: firebaseUser.uid });
+    throw new Error(errorMsg);
+  }
+  logger.info(`Creating user profile for UID: ${firebaseUser.uid}`);
+  const userRef = doc(db, 'users', firebaseUser.uid);
+  const nowISO = formatISO(new Date());
+
+  const newUserProfile: User = {
+    uid: firebaseUser.uid,
+    email: firebaseUser.email,
+    displayName: displayName || firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'New User',
+    role: 'viewer', // Default role for new users
+    createdAt: nowISO,
+    avatarUrl: firebaseUser.photoURL || null,
+  };
+
   try {
-    const role: UserRole = MOCK_USER_ID.includes('_admin') ? 'admin' : MOCK_USER_ID.includes('_manager') ? 'manager' : 'viewer';
-    const user: User = {
-      id: MOCK_USER_ID,
-      name: role === 'admin' ? "Admin User" : role === 'manager' ? "Fleet Manager" : "Demo User",
-      email: role === 'admin' ? "admin@example.com" : role === 'manager' ? "manager@example.com" : "user@example.com",
-      avatarUrl: `https://placehold.co/100x100.png?text=${role === 'admin' ? 'AU' : role === 'manager' ? 'FM' : 'DU'}`,
-      role: role
-    };
-    logger.info('[DATA] getCurrentUser returning mock user', { userId: user.id, role: user.role });
-    return user;
+    await setDoc(userRef, newUserProfile);
+    logger.info(`User profile created successfully for UID: ${firebaseUser.uid}`);
+    internalLogAuditEvent('USER_SIGNUP', 'USER', firebaseUser.uid, firebaseUser.uid, { email: firebaseUser.email, role: 'viewer' });
+    return newUserProfile;
   } catch (error) {
-      logger.error('[DATA] Error in getCurrentUser (mock implementation):', error);
+    logger.error(`Error creating user profile for UID ${firebaseUser.uid}:`, error, { profileData: newUserProfile });
+    throw error; // Re-throw so the caller can handle it
+  }
+}
+
+export async function getUserProfile(uid: string): Promise<User | null> {
+  if (!db) {
+    logger.error(`getUserProfile: Firestore 'db' instance is not initialized. Cannot fetch profile for UID ${uid}.`);
+    return null;
+  }
+  if (!uid) {
+    logger.warn('getUserProfile called with no UID.');
+    return null;
+  }
+  logger.debug(`Fetching user profile for UID: ${uid}`);
+  try {
+    const userRef = doc(db, 'users', uid);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      const data = userSnap.data();
+      // Ensure createdAt is string; Firestore might return Timestamp if just written
+      const createdAt = data.createdAt instanceof Timestamp ? formatISO(data.createdAt.toDate()) : data.createdAt;
+      const userProfile = { ...data, createdAt } as User;
+      logger.info(`User profile for UID ${uid} fetched successfully.`);
+      return userProfile;
+    }
+    logger.warn(`User profile for UID ${uid} not found.`);
+    return null;
+  } catch (error) {
+    logger.error(`Error fetching user profile for UID ${uid}:`, error);
+    return null;
+  }
+}
+
+
+// This function is still primarily for server-side use where Firebase Admin SDK might be used.
+// For client-side, AuthContext is the source of truth for the *currently logged-in* user's profile.
+export async function getCurrentUser(authUserId?: string): Promise<User | null> {
+  logger.info('[DATA] getCurrentUser called', { authUserId });
+  if (authUserId) {
+    try {
+      const userProfile = await getUserProfile(authUserId);
+      if (userProfile) {
+        logger.info(`[DATA] getCurrentUser - Returning profile for UID: ${authUserId}`);
+        return userProfile;
+      }
+      logger.warn(`[DATA] getCurrentUser - No profile found for authenticated UID: ${authUserId}. A profile should have been created on sign-up.`);
+      // Fallback: create a temporary user object if profile is missing, though this is not ideal
+      return {
+        uid: authUserId,
+        email: 'unknown@example.com', // Firebase Auth user might have email
+        role: 'viewer',
+        createdAt: formatISO(new Date()),
+        displayName: 'Unknown User'
+      };
+    } catch (error) {
+      logger.error('[DATA] Error in getCurrentUser fetching profile:', error, { authUserId });
       return null;
+    }
+  } else {
+    logger.info('[DATA] getCurrentUser - No authUserId provided, returning null.');
+    return null;
   }
 }
 
 // --- Reportable Documents ---
 export async function getReportableDocuments(
+  currentUserId: string | null,
   filters?: {
     statuses?: Array<'ExpiringSoon' | 'Overdue' | 'Compliant' | 'Missing'>,
     documentTypes?: DocumentType[]
@@ -878,19 +1014,22 @@ export async function getReportableDocuments(
     logger.error("getReportableDocuments: Firestore 'db' instance is not initialized. Cannot fetch reportable documents.");
     return [];
   }
-  logger.info('Fetching reportable documents with filters:', { filters });
+  if (!currentUserId) {
+    logger.warn("getReportableDocuments: No currentUserId. Returning empty array.");
+    return [];
+  }
+  logger.info(`Fetching reportable documents for user ${currentUserId} with filters:`, { filters });
   try {
-    const allVehicles = await getVehicles();
+    const allVehicles = await getVehicles(currentUserId); // Pass currentUserId
     const reportableDocs: ReportableDocument[] = [];
     const now = new Date();
-    now.setHours(0,0,0,0); // For consistent day comparison
+    now.setHours(0,0,0,0); 
 
     allVehicles.forEach(vehicle => {
       const latestActiveDocsMap = new Map<string, VehicleDocument>();
 
-      // Populate latestActiveDocsMap with the latest version of each document type that has an expiry date
       (vehicle.documents || []).forEach(doc => {
-        if (doc.expiryDate) { // Only consider docs with expiry dates as potentially "active"
+        if (doc.expiryDate) { 
           const typeKey = doc.type === 'Other' && doc.customTypeName ? `Other:${doc.customTypeName}` : doc.type;
           const existingLatest = latestActiveDocsMap.get(typeKey);
           if (!existingLatest ||
@@ -901,15 +1040,12 @@ export async function getReportableDocuments(
         }
       });
 
-      // Process expected document types to find active ones or create "Missing" entries
       const allExpectedDocTypeKeys = new Set<string>(DOCUMENT_TYPES.filter(dt => dt !== 'Other'));
-      (vehicle.documents || []).forEach(doc => { // Add any 'Other' custom types from vehicle documents
+      (vehicle.documents || []).forEach(doc => { 
           if (doc.type === 'Other' && doc.customTypeName) {
               allExpectedDocTypeKeys.add(`Other:${doc.customTypeName}`);
           }
       });
-      // Ensure a key for generic 'Other' (no customTypeName) is considered if vehicle has such docs or if it's a standard type.
-      // If the vehicle has 'Other' docs without a customTypeName, or if it's generally an expected type.
       if ( (vehicle.documents || []).some(d => d.type === 'Other' && !d.customTypeName) || DOCUMENT_TYPES.includes('Other')) {
           allExpectedDocTypeKeys.add('Other:GENERIC');
       }
@@ -922,8 +1058,8 @@ export async function getReportableDocuments(
 
         const activeDoc = latestActiveDocsMap.get(typeKey);
 
-        if (activeDoc) { // If an active document (with expiry) was found
-          const status = getDocumentComplianceStatus(activeDoc.expiryDate); // expiryDate is guaranteed here
+        if (activeDoc) { 
+          const status = getDocumentComplianceStatus(activeDoc.expiryDate); 
           const daysDiff = differenceInDays(parseISO(activeDoc.expiryDate!), now);
 
           if ((!filters?.statuses || filters.statuses.includes(status)) &&
@@ -935,31 +1071,30 @@ export async function getReportableDocuments(
               daysDifference: daysDiff,
             });
           }
-        } else { // No active document (with expiry) found for this typeKey, consider it "Missing"
+        } else { 
           const status = 'Missing';
           if ((!filters?.statuses || filters.statuses.includes(status)) &&
               (!filters?.documentTypes || filters.documentTypes.includes(docTypeForLookup))) {
 
-            // Try to find any version of this document type (even without expiry) to get some details
             const anyVersionOfDoc = (vehicle.documents || []).find(d =>
                 d.type === docTypeForLookup &&
                 (docTypeForLookup !== 'Other' || d.customTypeName === customTypeNameForLookup)
             );
 
             reportableDocs.push({
-              id: anyVersionOfDoc?.id || generateId(), // Use existing ID or generate one
+              id: anyVersionOfDoc?.id || generateId(), 
               vehicleId: vehicle.id,
               type: docTypeForLookup,
               customTypeName: customTypeNameForLookup,
               policyNumber: anyVersionOfDoc?.policyNumber || null,
               startDate: anyVersionOfDoc?.startDate || null,
-              expiryDate: null, // Explicitly null for missing
+              expiryDate: null, 
               documentUrl: anyVersionOfDoc?.documentUrl || null,
               documentName: anyVersionOfDoc?.documentName || null,
               status: status,
-              uploadedAt: anyVersionOfDoc?.uploadedAt || formatISO(new Date(0)), // Default if no version found
+              uploadedAt: anyVersionOfDoc?.uploadedAt || formatISO(new Date(0)), 
               vehicleRegistration: vehicle.registrationNumber,
-              daysDifference: -Infinity, // Consistent value for sorting Missing
+              daysDifference: -Infinity, 
               aiExtractedPolicyNumber: anyVersionOfDoc?.aiExtractedPolicyNumber || null,
               aiPolicyNumberConfidence: anyVersionOfDoc?.aiPolicyNumberConfidence || null,
               aiExtractedStartDate: anyVersionOfDoc?.aiExtractedStartDate || null,
@@ -972,24 +1107,21 @@ export async function getReportableDocuments(
       });
     });
 
-    // Sort final list
     const sorted = reportableDocs.sort((a, b) => {
       const statusOrderValue = (s: ReportableDocument['status']) => ({ 'Overdue': 1, 'ExpiringSoon': 2, 'Missing': 3, 'Compliant': 4 }[s] || 5);
       const statusDiff = statusOrderValue(a.status) - statusOrderValue(b.status);
       if (statusDiff !== 0) return statusDiff;
 
-      // For Compliant, sort by furthest expiry first (more daysDifference is better)
-      // For others, sort by closest expiry/most overdue first (less daysDifference is more urgent)
       let daysDiffCompare = (a.status === 'Compliant' && b.status === 'Compliant') ? (b.daysDifference - a.daysDifference) : (a.daysDifference - b.daysDifference);
       if (daysDiffCompare !== 0) return daysDiffCompare;
 
       return a.vehicleRegistration.localeCompare(b.vehicleRegistration);
     });
-    logger.info(`Returning ${sorted.length} reportable documents.`);
+    logger.info(`Returning ${sorted.length} reportable documents for user ${currentUserId}.`);
     return sorted;
 
   } catch (error) {
-    logger.error('Error fetching reportable documents:', error, { filters });
+    logger.error(`Error fetching reportable documents for user ${currentUserId}:`, error, { filters });
     return [];
   }
 }

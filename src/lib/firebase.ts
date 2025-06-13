@@ -2,7 +2,8 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { logger } from './logger'; // Import the logger
-// import { getAuth } from 'firebase/auth'; // We can add this later if we implement Firebase Auth
+import { getAuth } from 'firebase/auth'; // Uncommented
+
 // We are removing Firebase Storage for now to avoid needing a paid plan.
 // import { getStorage } from 'firebase/storage';
 
@@ -65,7 +66,7 @@ try {
   throw error;
 }
 
-// const auth = getAuth(app); // For later
+const auth = getAuth(app); // Uncommented
 // const storage = getStorage(app); // For later, removed for now
 
-export { db /*, auth */ }; // Removed storage export
+export { db, auth }; // Uncommented auth export

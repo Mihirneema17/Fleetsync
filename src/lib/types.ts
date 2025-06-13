@@ -1,4 +1,6 @@
 
+import type { User as FirebaseUser } from 'firebase/auth';
+
 export type VehicleType = string; // Changed from union to string to allow custom types
 export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
@@ -21,8 +23,9 @@ export interface VehicleDocument {
   policyNumber?: string | null;
   startDate?: string | null;    // ISO Date string
   expiryDate: string | null; // ISO Date string
-  documentUrl?: string | null; // Mock URL
+  documentUrl?: string | null; // Mock URL if not using actual storage
   documentName?: string | null; // Name of the uploaded file
+  // storagePath?: string | null; // Removed as we are not using Firebase Storage for now
   status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'Missing'; // This status is for THIS specific document instance
   uploadedAt: string; // ISO datetime string when this document record was created/uploaded
   
@@ -44,19 +47,25 @@ export interface Alert {
   message: string;
   createdAt: string;
   isRead: boolean;
-  userId?: string;
+  userId?: string; // Should ideally be the Firebase Auth UID
   policyNumber?: string | null;
 }
 
 export type UserRole = 'admin' | 'manager' | 'viewer';
 
+// This User interface will represent the data stored in our 'users' collection in Firestore.
 export interface User {
-  id: string;
-  name: string;
-  email: string;
-  avatarUrl?: string;
-  role: UserRole; 
+  uid: string; // Firebase Auth User ID
+  email: string | null;
+  displayName?: string | null;
+  role: UserRole;
+  createdAt: string; // ISO datetime string
+  avatarUrl?: string | null; // Optional, can be added later
 }
+
+// Re-export FirebaseUser if needed elsewhere, or use it directly
+export type { FirebaseUser };
+
 
 export interface VehicleComplianceStatusBreakdown {
   compliant: number;
@@ -86,9 +95,9 @@ export type AuditLogAction =
   | 'CREATE_VEHICLE' | 'UPDATE_VEHICLE' | 'DELETE_VEHICLE'
   | 'UPLOAD_DOCUMENT' | 'UPDATE_DOCUMENT' | 'DELETE_DOCUMENT'
   | 'MARK_ALERT_READ'
-  | 'USER_LOGIN' | 'USER_LOGOUT' 
+  | 'USER_LOGIN' | 'USER_LOGOUT' | 'USER_SIGNUP' // Added USER_SIGNUP
   | 'VIEW_REPORT' | 'EXPORT_REPORT'
-  | 'SYSTEM_DATA_INITIALIZED'; // Changed from SYSTEM_START
+  | 'SYSTEM_DATA_INITIALIZED';
 
 export interface AuditLogEntry {
   id: string;
