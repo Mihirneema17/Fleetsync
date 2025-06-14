@@ -3,8 +3,8 @@
 
 import * as React from "react"
 import * as AccordionPrimitive from "@radix-ui/react-accordion"
-import { Plus, Minus } from "lucide-react" // Changed from ChevronDown
-import { motion } from "framer-motion" // Added for animation
+import { Plus, Minus } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion" // Added AnimatePresence
 
 import { cn } from "@/lib/utils"
 
@@ -33,29 +33,38 @@ const AccordionTrigger = React.forwardRef<
       <AccordionPrimitive.Trigger
         ref={ref}
         className={cn(
-          "flex flex-1 items-center justify-between py-4 font-medium transition-all hover:underline", // Removed [&[data-state=open]>svg]:rotate-180
+          "flex flex-1 items-center justify-between py-4 font-medium transition-all hover:underline",
           className
         )}
         {...props}
       >
         {children}
         <div className="relative h-4 w-4 shrink-0" aria-hidden="true">
-          <motion.div
-            initial={false}
-            animate={{ opacity: isOpen ? 0 : 1, scale: isOpen ? 0.5 : 1, rotate: isOpen ? -90 : 0 }}
-            transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="absolute inset-0 flex items-center justify-center"
-          >
-            <Plus className="h-4 w-4" />
-          </motion.div>
-          <motion.div
-            initial={false}
-            animate={{ opacity: isOpen ? 1 : 0, scale: isOpen ? 1 : 0.5, rotate: isOpen ? 0 : 90 }}
-            transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="absolute inset-0 flex items-center justify-center"
-          >
-            <Minus className="h-4 w-4" />
-          </motion.div>
+          <AnimatePresence initial={false} mode="sync"> {/* mode="sync" or no mode might be better than "wait" for icon swaps */}
+            {isOpen ? (
+              <motion.div
+                key="minus-icon" // Unique key for AnimatePresence
+                initial={{ opacity: 0, scale: 0.7, rotate: -45 }}
+                animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                exit={{ opacity: 0, scale: 0.7, rotate: 45 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <Minus className="h-4 w-4" />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="plus-icon" // Unique key for AnimatePresence
+                initial={{ opacity: 0, scale: 0.7, rotate: 45 }}
+                animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                exit={{ opacity: 0, scale: 0.7, rotate: -45 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <Plus className="h-4 w-4" />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </AccordionPrimitive.Trigger>
     </AccordionPrimitive.Header>
