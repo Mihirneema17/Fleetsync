@@ -2,6 +2,7 @@
 "use client"; 
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation'; // For reading URL params
 import { Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2, PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,7 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; // Updated import
+import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; 
 import type { Vehicle, DocumentType, VehicleDocument } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {
@@ -47,6 +48,7 @@ import { useToast } from "@/hooks/use-toast";
 import { handleDeleteVehicleServerAction } from '@/app/vehicles/actions';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { DATE_FORMAT } from '@/lib/constants';
+import { motion } from 'framer-motion';
 
 const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo', variant: 'default' | 'secondary' | 'destructive' | 'outline', icon: React.ElementType } => {
   let hasOverdue = false;
@@ -61,7 +63,7 @@ const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' |
   if (activeDocs.length === 0 && vehicle.documents.some(d => d.status === 'Missing')) {
       hasMissing = true;
   } else {
-     const essentialTypes = ['Insurance', 'Fitness', 'PUC']; // AITP not considered essential for "Missing" badge here
+     const essentialTypes = ['Insurance', 'Fitness', 'PUC']; 
      let missingEssentialCount = 0;
      for (const type of essentialTypes as DocumentType[]) {
         if (!getLatestDocumentForType(vehicle, type)?.expiryDate) {
@@ -109,16 +111,42 @@ interface VehicleListClientProps {
   initialVehicles: Vehicle[];
 }
 
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05, // Delay between each child
+      delayChildren: 0.1,    // Initial delay for the container's children
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { y: 15, opacity: 0 },
+  visible: {
+    y: 0,
+    opacity: 1,
+    transition: {
+      type: "spring",
+      stiffness: 120,
+      damping: 12,
+    },
+  },
+};
+
 export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
+  const searchParams = useSearchParams();
+  const newVehicleId = searchParams.get('new');
+
   const [vehiclesByType, setVehiclesByType] = useState<Record<string, Vehicle[]>>({});
-  const [isLoading, setIsLoading] = useState(false); // Initial loading is handled by server component
+  const [isLoading, setIsLoading] = useState(false); 
   const [isDeleting, startDeleteTransition] = useTransition();
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isConfirmDeleteDialogOpen, setIsConfirmDeleteDialogOpen] = useState(false);
   const [openAccordionItems, setOpenAccordionItems] = useState<string[]>([]);
   const { toast } = useToast();
 
-  // Memoize the grouping logic
   const groupedVehicles = useMemo(() => {
     const grouped: Record<string, Vehicle[]> = {};
     initialVehicles.forEach(vehicle => {
@@ -133,14 +161,20 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
 
   useEffect(() => {
     setVehiclesByType(groupedVehicles);
-    // Open the first few accordion items by default, if data exists
     const typeKeys = Object.keys(groupedVehicles);
     if (typeKeys.length > 0) {
-      setOpenAccordionItems(typeKeys.slice(0, 3));
+      const defaultOpen = typeKeys.slice(0, 2); // Open first two by default
+      if (newVehicleId) {
+        const typeOfNewVehicle = initialVehicles.find(v => v.id === newVehicleId)?.type;
+        if (typeOfNewVehicle && !defaultOpen.includes(typeOfNewVehicle)) {
+          defaultOpen.push(typeOfNewVehicle);
+        }
+      }
+      setOpenAccordionItems(defaultOpen);
     } else {
       setOpenAccordionItems([]);
     }
-  }, [groupedVehicles]);
+  }, [groupedVehicles, newVehicleId, initialVehicles]);
 
 
   const handleDeleteClick = (vehicle: Vehicle) => {
@@ -155,8 +189,6 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
       const result = await handleDeleteVehicleServerAction(vehicleToDelete.id);
       if (result.success) {
         toast({ title: "Vehicle Deleted", description: `Vehicle ${vehicleToDelete.registrationNumber} has been deleted.` });
-        // Data refresh will be handled by router.refresh() or revalidatePath invoked by the action
-        // For immediate UI update before full refresh, one might filter client-side state, but usually refresh is preferred.
       } else {
         toast({ title: "Error", description: result.error, variant: "destructive" });
       }
@@ -174,10 +206,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
       const StatusIcon = config.icon;
       const expiry = parseISO(latestDoc.expiryDate);
       const now = new Date();
-      now.setHours(0,0,0,0); // Start of today
-      // expiry.setHours(23,59,59,999); // End of expiry day for inclusive comparison
-
-      // Ensure comparison is consistent: differenceInDays(laterDate, earlierDate)
+      now.setHours(0,0,0,0); 
       const daysDiff = differenceInDays(expiry, now); 
   
       return (
@@ -208,7 +237,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     return <Badge variant="outline" className="text-xs whitespace-nowrap">Missing</Badge>;
   };
   
-  if (isLoading) { // This might be removed if all data loading is on server
+  if (isLoading) { 
     return (
       <div className="flex justify-center items-center h-64">
         <Car className="w-12 h-12 animate-pulse text-primary" />
@@ -258,7 +287,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
                         {type} ({vehicleList.length})
                         {vehicleList.length > 0 && 
                             <Badge 
-                                variant={getOverallVehicleStatusBadge(vehicleList[0]).variant} // Example: use first vehicle for group badge
+                                variant={getOverallVehicleStatusBadge(vehicleList[0]).variant} 
                                 className={cn("ml-2", 
                                     getOverallVehicleStatusBadge(vehicleList[0]).status === 'ExpiringSoon' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : '',
                                     getOverallVehicleStatusBadge(vehicleList[0]).status === 'Compliant' ? 'bg-green-100 text-green-800 border-green-300' : ''
@@ -282,9 +311,21 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
                           <TableHead className="text-right min-w-[100px]">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
-                      <TableBody>
+                      <motion.tbody
+                        initial="hidden"
+                        animate={openAccordionItems.includes(type) ? "visible" : "hidden"}
+                        variants={containerVariants}
+                      >
                         {vehicleList.map((vehicle) => (
-                            <TableRow key={vehicle.id}>
+                            <motion.tr 
+                                key={vehicle.id}
+                                variants={itemVariants}
+                                layout // For smooth re-flows if list order changes dynamically
+                                className={cn(
+                                    "border-b transition-colors duration-150 ease-out hover:bg-muted/50 data-[state=selected]:bg-muted hover:shadow-sm",
+                                    vehicle.id === newVehicleId ? 'highlight-new-item' : ''
+                                  )}
+                            >
                               <TableCell className="font-medium">{vehicle.registrationNumber}</TableCell>
                               <TableCell>{vehicle.make} {vehicle.model}</TableCell>
                               {documentTypesForTable.map(docType => (
@@ -319,9 +360,9 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </TableCell>
-                            </TableRow>
+                            </motion.tr>
                           ))}
-                      </TableBody>
+                      </motion.tbody>
                     </Table>
                     </div>
                   </AccordionContent>

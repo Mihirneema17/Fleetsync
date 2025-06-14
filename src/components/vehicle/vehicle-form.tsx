@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import React from "react";
 import { useAuth } from "@/contexts/auth-context"; 
-import { logger } from "@/lib/logger"; // Ensure logger is imported
+import { logger } from "@/lib/logger"; 
 
 const vehicleFormSchema = z.object({
   registrationNumber: z.string()
@@ -43,7 +43,7 @@ interface VehicleFormProps {
   onSubmit: (
     data: VehicleFormValues,
     currentUserId: string | null
-  ) => Promise<Vehicle | { error: string } | undefined | void>;
+  ) => Promise<{ vehicle?: Vehicle; error?: string; redirectTo?: string } | void>; // Updated return type
   isEditing?: boolean;
 }
 
@@ -107,7 +107,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       };
       const result = await onSubmit(processedData, firebaseUser.uid); 
 
-      if (result && typeof result === 'object' && 'error' in result && result.error) {
+      if (result && result.error) {
         logger.client.error("VehicleForm: onSubmit (server action) returned an error.", { error: result.error, isEditing });
         throw new Error(result.error);
       }
@@ -117,7 +117,11 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
         description: `Vehicle ${processedData.registrationNumber} has been successfully ${isEditing ? 'updated' : 'added'}.`,
       });
 
-      router.push("/vehicles");
+      if (result && result.redirectTo) {
+        router.push(result.redirectTo);
+      } else {
+        router.push("/vehicles");
+      }
       router.refresh(); 
 
     } catch (error) {
@@ -228,5 +232,3 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
     </Card>
   );
 }
-
-    

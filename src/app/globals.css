@@ -105,3 +105,15 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  .highlight-new-item {
+    animation: highlight-fade 2.5s ease-out forwards;
+  }
+}
+
+@keyframes highlight-fade {
+  0% { background-color: hsl(var(--primary) / 0.3); }
+  60% { background-color: hsl(var(--primary) / 0.3); } /* Hold highlight longer */
+  100% { background-color: transparent; }
+}
