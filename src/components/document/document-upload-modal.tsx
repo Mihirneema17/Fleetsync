@@ -33,14 +33,16 @@ import {
 } from '@/components/ui/select';
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, Loader2, FileText, AlertCircle, Info } from 'lucide-react';
+import { CalendarIcon, Loader2, FileText, AlertCircle, Info, CheckCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, parseISO, isValid } from 'date-fns';
 import { DOCUMENT_TYPES, AI_SUPPORTED_DOCUMENT_TYPES, DATE_FORMAT } from '@/lib/constants';
 import type { DocumentType, VehicleDocument } from '@/lib/types';
 import type { ExtractExpiryDateInput, ExtractExpiryDateOutput } from '@/ai/flows/extract-expiry-date';
 import { useToast } from '@/hooks/use-toast';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle as InfoCardTitle, CardContent } from '@/components/ui/card'; // Renamed CardTitle
+import { AIConfirmationModal, type AIConfirmationData, type AIConfirmedValues } from './ai-confirmation-modal';
+import { logger } from '@/lib/logger';
 
 const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
@@ -81,10 +83,8 @@ interface DocumentUploadModalProps {
       policyNumber?: string | null;
       startDate?: string | null; // ISO string
       expiryDate: string | null; // ISO string
-      // documentFile?: File; // File object is not passed to server action for mock
       documentName?: string; // Filename
       documentUrl?: string; // Mock URL
-      // storagePath?: string | null; // Removed
     },
     aiExtractedPolicyNumber?: string | null,
     aiPolicyNumberConfidence?: number | null,
@@ -111,18 +111,23 @@ export function DocumentUploadModal({
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  const [aiExtractedPolicyNumber, setAiExtractedPolicyNumber] = useState<string | null>(null);
-  const [aiPolicyNumberConfidence, setAiPolicyNumberConfidence] = useState<number | null>(null);
-  const [aiExtractedStartDate, setAiExtractedStartDate] = useState<string | null>(null);
-  const [aiStartDateConfidence, setAiStartDateConfidence] = useState<number | null>(null);
-  const [aiExtractedExpiryDate, setAiExtractedExpiryDate] = useState<string | null>(null);
-  const [aiExpiryDateConfidence, setAiExpiryDateConfidence] = useState<number | null>(null);
-
+  // State for original AI extracted data (passed to onSubmit)
+  const [originalAIExtractedPolicyNumber, setOriginalAIExtractedPolicyNumber] = useState<string | null>(null);
+  const [originalAIPolicyNumberConfidence, setOriginalAIPolicyNumberConfidence] = useState<number | null>(null);
+  const [originalAIExtractedStartDate, setOriginalAIExtractedStartDate] = useState<string | null>(null);
+  const [originalAIStartDateConfidence, setOriginalAIStartDateConfidence] = useState<number | null>(null);
+  const [originalAIExtractedExpiryDate, setOriginalAIExtractedExpiryDate] = useState<string | null>(null);
+  const [originalAIExpiryDateConfidence, setOriginalAIExpiryDateConfidence] = useState<number | null>(null);
+  
   const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
   const [isExpiryDatePickerOpen, setIsExpiryDatePickerOpen] = useState(false);
+
+  // State for AI Confirmation Modal
+  const [isAIConfirmModalOpen, setIsAIConfirmModalOpen] = useState(false);
+  const [rawAIDataForConfirm, setRawAIDataForConfirm] = useState<AIConfirmationData | null>(null);
 
   const modalTitle = "Upload New Document Version";
 
@@ -138,6 +143,17 @@ export function DocumentUploadModal({
     },
   });
 
+  const resetAIStates = () => {
+    setOriginalAIExtractedPolicyNumber(null);
+    setOriginalAIPolicyNumberConfidence(null);
+    setOriginalAIExtractedStartDate(null);
+    setOriginalAIStartDateConfidence(null);
+    setOriginalAIExtractedExpiryDate(null);
+    setOriginalAIExpiryDateConfidence(null);
+    setAiError(null);
+    setRawAIDataForConfirm(null);
+  };
+
   useEffect(() => {
     form.reset({
       documentType: initialDocumentData?.type || 'Insurance',
@@ -147,15 +163,9 @@ export function DocumentUploadModal({
       expiryDate: null,
       documentFile: null,
     });
-    setAiExtractedPolicyNumber(null);
-    setAiPolicyNumberConfidence(null);
-    setAiExtractedStartDate(null);
-    setAiStartDateConfidence(null);
-    setAiExtractedExpiryDate(null);
-    setAiExpiryDateConfidence(null);
+    resetAIStates();
     setSelectedFile(null);
     setFilePreview(null);
-    setAiError(null);
   }, [initialDocumentData, form, isOpen]);
 
 
@@ -164,13 +174,7 @@ export function DocumentUploadModal({
     if (file) {
       setSelectedFile(file);
       form.setValue('documentFile', file);
-      setAiError(null);
-      setAiExtractedPolicyNumber(null);
-      setAiPolicyNumberConfidence(null);
-      setAiExtractedStartDate(null);
-      setAiStartDateConfidence(null);
-      setAiExtractedExpiryDate(null);
-      setAiExpiryDateConfidence(null);
+      resetAIStates(); // Reset previous AI data on new file selection
 
       const currentDocType = form.getValues('documentType');
       if (AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocType)) {
@@ -185,30 +189,34 @@ export function DocumentUploadModal({
                 documentType: currentDocType.toLowerCase() as 'insurance' | 'fitness' | 'puc',
               });
 
-              setAiExtractedPolicyNumber(result.policyNumber);
-              setAiPolicyNumberConfidence(result.policyNumberConfidence);
-              if (result.policyNumber) {
-                form.setValue('policyNumber', result.policyNumber);
-                toast({ title: "AI Extraction", description: `Suggested Policy #: ${result.policyNumber} (Conf: ${result.policyNumberConfidence?.toFixed(2) ?? 'N/A'})` });
-              }
+              // Store original AI results
+              setOriginalAIExtractedPolicyNumber(result.policyNumber);
+              setOriginalAIPolicyNumberConfidence(result.policyNumberConfidence);
+              setOriginalAIExtractedStartDate(result.startDate);
+              setOriginalAIStartDateConfidence(result.startDateConfidence);
+              setOriginalAIExtractedExpiryDate(result.expiryDate);
+              setOriginalAIExpiryDateConfidence(result.confidence);
 
-              setAiExtractedStartDate(result.startDate);
-              setAiStartDateConfidence(result.startDateConfidence);
-              if (result.startDate && isValid(parseISO(result.startDate))) {
-                form.setValue('startDate', parseISO(result.startDate));
-                 toast({ title: "AI Extraction", description: `Suggested Start Date: ${format(parseISO(result.startDate), DATE_FORMAT)} (Conf: ${result.startDateConfidence?.toFixed(2) ?? 'N/A'})` });
-              }
+              // Prepare data for AIConfirmationModal
+              const aiDataForModal: AIConfirmationData = {
+                policyNumber: result.policyNumber,
+                policyNumberConfidence: result.policyNumberConfidence,
+                startDate: result.startDate,
+                startDateConfidence: result.startDateConfidence,
+                expiryDate: result.expiryDate,
+                expiryDateConfidence: result.confidence,
+                // These are not provided by extractExpiryDateFn, will be undefined
+                vehicleRegistrationNumber: undefined, 
+                vehicleRegistrationNumberConfidence: undefined,
+                documentTypeSuggestion: undefined,
+                documentTypeConfidence: undefined,
+                customTypeNameSuggestion: undefined,
+              };
+              setRawAIDataForConfirm(aiDataForModal);
+              setIsAIConfirmModalOpen(true); // Open confirmation modal
 
-              setAiExtractedExpiryDate(result.expiryDate);
-              setAiExpiryDateConfidence(result.confidence);
-              if (result.expiryDate && isValid(parseISO(result.expiryDate))) {
-                form.setValue('expiryDate', parseISO(result.expiryDate));
-                toast({ title: "AI Extraction", description: `Suggested Expiry Date: ${format(parseISO(result.expiryDate), DATE_FORMAT)} (Conf: ${result.confidence?.toFixed(2) ?? 'N/A'})` });
-              } else if (result.expiryDate === null && result.startDate === null && result.policyNumber === null ) {
-                 toast({ title: "AI Extraction", description: "AI could not find any details.", variant: "default" });
-              }
             } catch (e) {
-              console.error("AI extraction error:", e);
+              logger.error("AI extraction error in DocumentUploadModal:", e);
               setAiError("Failed to extract details using AI. Please enter manually.");
               toast({ title: "AI Error", description: "AI data extraction failed.", variant: "destructive" });
             } finally {
@@ -222,7 +230,7 @@ export function DocumentUploadModal({
           };
           reader.readAsDataURL(file);
         } catch (e) {
-          console.error("File processing error:", e);
+          logger.error("File processing error in DocumentUploadModal:", e);
           setAiError("Error processing file.");
           setIsExtractingDate(false);
           toast({ title: "File Error", description: "Error processing file before AI call.", variant: "destructive" });
@@ -232,7 +240,27 @@ export function DocumentUploadModal({
       setSelectedFile(null);
       setFilePreview(null);
       form.setValue('documentFile', null);
+      resetAIStates();
     }
+  };
+
+  const handleAIConfirm = (confirmedData: AIConfirmedValues) => {
+    logger.info("AI Data Confirmed by User in DocumentUploadModal:", confirmedData);
+    if (confirmedData.policyNumber !== undefined) form.setValue('policyNumber', confirmedData.policyNumber);
+    if (confirmedData.startDate !== undefined) form.setValue('startDate', confirmedData.startDate);
+    if (confirmedData.expiryDate !== undefined) form.setValue('expiryDate', confirmedData.expiryDate);
+    
+    // Show toast for user notes if any
+    if (confirmedData.userNotes) {
+        toast({
+            title: "User Notes Captured",
+            description: `Notes: "${confirmedData.userNotes}" (These notes are for reference and not saved with the document data yet).`,
+            duration: 5000,
+        });
+    }
+
+    setIsAIConfirmModalOpen(false);
+    setRawAIDataForConfirm(null); // Clear data after use
   };
 
   const currentDocumentType = form.watch('documentType');
@@ -260,247 +288,266 @@ export function DocumentUploadModal({
         documentName: selectedFile.name,
         documentUrl: mockDocumentUrl,
       },
-      aiExtractedPolicyNumber,
-      aiPolicyNumberConfidence,
-      aiExtractedStartDate,
-      aiStartDateConfidence,
-      aiExtractedExpiryDate,
-      aiExpiryDateConfidence
+      originalAIExtractedPolicyNumber,
+      originalAIPolicyNumberConfidence,
+      originalAIExtractedStartDate,
+      originalAIStartDateConfidence,
+      originalAIExtractedExpiryDate,
+      originalAIExpiryDateConfidence
     );
     setIsSubmitting(false);
+    // onClose(); // Let parent decide if modal should close (usually it does after onSubmit)
   };
 
   if (!isOpen) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="font-headline">
-            {modalTitle}
-          </DialogTitle>
-          <DialogDescription>
-            Upload a new version or instance of this document. It will be added to the vehicle's history. The file itself is not stored, only its metadata.
-          </DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(processSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="documentType"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Document Type *</FormLabel>
-                  <Select
-                    onValueChange={(value) => {
-                      field.onChange(value);
-                      setAiExtractedPolicyNumber(null); setAiPolicyNumberConfidence(null);
-                      setAiExtractedStartDate(null); setAiStartDateConfidence(null);
-                      setAiExtractedExpiryDate(null); setAiExpiryDateConfidence(null);
-                      setAiError(null);
-                    }}
-                    defaultValue={field.value}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select document type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {DOCUMENT_TYPES.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {currentDocumentType === 'Other' && (
+    <>
+      <Dialog open={isOpen} onOpenChange={(open) => { if (!open && !isAIConfirmModalOpen) onClose(); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-headline">
+              {modalTitle}
+            </DialogTitle>
+            <DialogDescription>
+              Upload a new version or instance of this document. It will be added to the vehicle's history. The file itself is not stored, only its metadata.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(processSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
-                name="customTypeName"
+                name="documentType"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Custom Document Name *</FormLabel>
+                    <FormLabel>Document Type *</FormLabel>
+                    <Select
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        resetAIStates(); // Reset AI if type changes after file selection
+                        // If a file is already selected, and new type supports AI, re-trigger? For now, user must re-select file if type changes.
+                        if (selectedFile) {
+                            toast({title: "Info", description: "Document type changed. Please re-select the file if you want AI to process it for the new type."})
+                            // To auto-retrigger AI, one might call a modified handleFileChange here, but simpler to ask user.
+                        }
+                      }}
+                      defaultValue={field.value}
+                      value={field.value} // Ensure value is controlled
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select document type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {DOCUMENT_TYPES.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {currentDocumentType === 'Other' && (
+                <FormField
+                  control={form.control}
+                  name="customTypeName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Custom Document Name *</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g., Special Permit XYZ" {...field} value={field.value ?? ''}/>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <FormField
+                control={form.control}
+                name="documentFile"
+                render={({ field }) => ( // field is not directly used for input value, but for registration
+                  <FormItem>
+                    <FormLabel>Document File *</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., Special Permit XYZ" {...field} />
+                      <Input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        onChange={handleFileChange} // Custom handler
+                        className="text-sm"
+                        required // Basic HTML5 required
+                        disabled={isExtractingDate || isSubmitting}
+                      />
+                    </FormControl>
+                    <FormMessage /> {/* For zod errors related to 'documentFile' if any */}
+                  </FormItem>
+                )}
+              />
+
+              {filePreview && selectedFile && selectedFile.type.startsWith('image/') && (
+                <img src={filePreview} alt="File preview" className="mt-2 max-h-40 rounded-md border" />
+              )}
+              {selectedFile && !selectedFile.type.startsWith('image/') && (
+                  <div className="text-sm text-muted-foreground mt-1">
+                      Selected file: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB) - Preview not available.
+                  </div>
+              )}
+
+              {isExtractingDate && (
+                <div className="flex items-center space-x-2 text-sm text-primary p-2 bg-primary/10 rounded-md">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Extracting document details using AI...</span>
+                </div>
+              )}
+              {aiError && !isExtractingDate && ( // Show AI error only if not currently extracting
+                <div className="flex items-center space-x-2 text-sm text-destructive p-2 bg-destructive/10 rounded-md">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>{aiError}</span>
+                </div>
+              )}
+              
+              {/* Display initial AI suggestions before confirmation modal for context, if modal isn't open */}
+              {!isAIConfirmModalOpen && !isExtractingDate && (originalAIExtractedPolicyNumber || originalAIExtractedStartDate || originalAIExtractedExpiryDate) && (
+                  <Card className="p-3 bg-muted/50">
+                      <InfoCardTitle className="text-sm font-medium flex items-center"><Info className="w-4 h-4 mr-2 text-blue-500"/>AI Initial Scan:</InfoCardTitle>
+                      <CardContent className="text-xs space-y-1 p-0 pt-1">
+                          {originalAIExtractedPolicyNumber && (<div>Policy #: {originalAIExtractedPolicyNumber} (Conf: {originalAIPolicyNumberConfidence?.toFixed(2) ?? 'N/A'})</div>)}
+                          {originalAIExtractedStartDate && (<div>Start: {format(parseISO(originalAIExtractedStartDate), DATE_FORMAT)} (Conf: {originalAIStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>)}
+                          {originalAIExtractedExpiryDate && (<div>Expiry: {format(parseISO(originalAIExtractedExpiryDate), DATE_FORMAT)} (Conf: {originalAIExpiryDateConfidence?.toFixed(2) ?? 'N/A'})</div>)}
+                          <FormDescription className="pt-1">Please verify and adjust details below, or via the confirmation step if AI processed the file.</FormDescription>
+                      </CardContent>
+                  </Card>
+              )}
+
+
+              <FormField
+                control={form.control}
+                name="policyNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Policy / Document Number</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter policy or document number" {...field} value={field.value ?? ''} disabled={isExtractingDate || isSubmitting} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            )}
 
-            <FormField
-              control={form.control}
-              name="documentFile"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Document File *</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      onChange={handleFileChange}
-                      className="text-sm"
-                      required
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {filePreview && selectedFile && selectedFile.type.startsWith('image/') && (
-              <img src={filePreview} alt="File preview" className="mt-2 max-h-40 rounded-md border" />
-            )}
-            {selectedFile && !selectedFile.type.startsWith('image/') && (
-                 <div className="text-sm text-muted-foreground mt-1">
-                    Selected file: {selectedFile.name} ({(selectedFile.size / 1024).toFixed(2)} KB) - Preview not available for this file type.
-                 </div>
-            )}
-
-
-            {isExtractingDate && (
-              <div className="flex items-center space-x-2 text-sm text-primary p-2 bg-primary/10 rounded-md">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Extracting document details using AI...</span>
+              <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="startDate"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Start Date</FormLabel>
+                        <Popover open={isStartDatePickerOpen} onOpenChange={setIsStartDatePickerOpen}>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn("w-full pl-3 text-left font-normal", !field.value && "text-muted-foreground")}
+                                disabled={isExtractingDate || isSubmitting}
+                              >
+                                {field.value ? format(field.value, DATE_FORMAT) : <span>Pick a date</span>}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={(date) => {
+                                field.onChange(date);
+                                setIsStartDatePickerOpen(false);
+                              }}
+                              initialFocus
+                              disabled={isExtractingDate || isSubmitting}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="expiryDate"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Expiry Date *</FormLabel>
+                        <Popover open={isExpiryDatePickerOpen} onOpenChange={setIsExpiryDatePickerOpen}>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn("w-full pl-3 text-left font-normal", !field.value && "text-muted-foreground")}
+                                disabled={isExtractingDate || isSubmitting}
+                              >
+                                {field.value ? format(field.value, DATE_FORMAT) : <span>Pick a date</span>}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={(date) => {
+                                field.onChange(date);
+                                setIsExpiryDatePickerOpen(false);
+                              }}
+                              initialFocus
+                              disabled={isExtractingDate || isSubmitting}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
               </div>
-            )}
-            {aiError && (
-              <div className="flex items-center space-x-2 text-sm text-destructive p-2 bg-destructive/10 rounded-md">
-                 <AlertCircle className="h-4 w-4" />
-                <span>{aiError}</span>
-              </div>
-            )}
-
-            {(!isExtractingDate && (aiExtractedPolicyNumber || aiExtractedStartDate || aiExtractedExpiryDate)) && (
-                <Card className="p-3 bg-muted/50">
-                    <CardHeader className="p-0 pb-2">
-                         <CardTitle className="text-sm font-medium flex items-center"><Info className="w-4 h-4 mr-2 text-blue-500"/>AI Suggested Details:</CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-xs space-y-1 p-0">
-                        {aiExtractedPolicyNumber && (
-                            <div>Policy #: {aiExtractedPolicyNumber} (Conf: {aiPolicyNumberConfidence?.toFixed(2) ?? 'N/A'})</div>
-                        )}
-                        {aiExtractedStartDate && (
-                            <div>Start Date: {format(parseISO(aiExtractedStartDate), DATE_FORMAT)} (Conf: {aiStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>
-                        )}
-                        {aiExtractedExpiryDate && (
-                            <div>Expiry Date: {format(parseISO(aiExtractedExpiryDate), DATE_FORMAT)} (Conf: {aiExpiryDateConfidence?.toFixed(2) ?? 'N/A'})</div>
-                        )}
-                         <FormDescription className="pt-1">Please verify and adjust if needed.</FormDescription>
-                    </CardContent>
-                </Card>
-            )}
-
-            <FormField
-              control={form.control}
-              name="policyNumber"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Policy / Document Number</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Enter policy or document number" {...field} value={field.value ?? ''} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="startDate"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Start Date</FormLabel>
-                      <Popover open={isStartDatePickerOpen} onOpenChange={setIsStartDatePickerOpen}>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn("w-full pl-3 text-left font-normal", !field.value && "text-muted-foreground")}
-                            >
-                              {field.value ? format(field.value, DATE_FORMAT) : <span>Pick a date</span>}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={(date) => {
-                              field.onChange(date);
-                              setIsStartDatePickerOpen(false);
-                            }}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="expiryDate"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Expiry Date *</FormLabel>
-                      <Popover open={isExpiryDatePickerOpen} onOpenChange={setIsExpiryDatePickerOpen}>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn("w-full pl-3 text-left font-normal", !field.value && "text-muted-foreground")}
-                            >
-                              {field.value ? format(field.value, DATE_FORMAT) : <span>Pick a date</span>}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={(date) => {
-                              field.onChange(date);
-                              setIsExpiryDatePickerOpen(false);
-                            }}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-            </div>
-             <FormDescription className="text-xs">
-                {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ?
-                'AI may suggest details if a file is selected. Please verify or set manually.' :
-                'Please enter details manually.'}
-            </FormDescription>
+              <FormDescription className="text-xs">
+                  {AI_SUPPORTED_DOCUMENT_TYPES.includes(form.getValues('documentType')) ?
+                  'If AI processes the file, a confirmation step will appear. Otherwise, please enter/verify details manually.' :
+                  'Please enter details manually.'} Fields marked with * are required.
+              </FormDescription>
 
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting || isExtractingDate}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting || isExtractingDate || !selectedFile || !form.getValues('expiryDate') }>
-                {(isSubmitting || isExtractingDate) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Add to History
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting || isExtractingDate}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmitting || isExtractingDate || !selectedFile || !form.getValues('expiryDate') }>
+                  {(isSubmitting || isExtractingDate) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Add to History
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {rawAIDataForConfirm && (
+        <AIConfirmationModal
+          isOpen={isAIConfirmModalOpen}
+          onClose={() => {
+            setIsAIConfirmModalOpen(false);
+            setRawAIDataForConfirm(null); // Clear data if modal is closed without confirming
+          }}
+          aiData={rawAIDataForConfirm}
+          onConfirm={handleAIConfirm}
+          isLoading={isExtractingDate} // Or false, as extraction is done by now
+          showVehicleRegistration={false} // Not applicable for this flow
+          showDocumentType={false}        // Not applicable for this flow
+        />
+      )}
+    </>
   );
 }
