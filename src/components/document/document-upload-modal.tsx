@@ -417,8 +417,8 @@ export function DocumentUploadModal({
                       <InfoCardTitle className="text-sm font-medium flex items-center"><Info className="w-4 h-4 mr-2 text-blue-500"/>AI Initial Scan:</InfoCardTitle>
                       <CardContent className="text-xs space-y-1 p-0 pt-1">
                           {originalAIExtractedPolicyNumber && (<div>Policy #: {originalAIExtractedPolicyNumber} (Conf: {originalAIPolicyNumberConfidence?.toFixed(2) ?? 'N/A'})</div>)}
-                          {originalAIExtractedStartDate && (<div>Start: {format(parseISO(originalAIExtractedStartDate), DATE_FORMAT)} (Conf: {originalAIStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>)}
-                          {originalAIExtractedExpiryDate && (<div>Expiry: {format(parseISO(originalAIExtractedExpiryDate), DATE_FORMAT)} (Conf: {originalAIExpiryDateConfidence?.toFixed(2) ?? 'N/A'})</div>)}
+                          {originalAIExtractedStartDate && isValid(parseISO(originalAIExtractedStartDate)) && (<div>Start: {format(parseISO(originalAIExtractedStartDate), DATE_FORMAT)} (Conf: {originalAIStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>)}
+                          {originalAIExtractedExpiryDate && isValid(parseISO(originalAIExtractedExpiryDate)) && (<div>Expiry: {format(parseISO(originalAIExtractedExpiryDate), DATE_FORMAT)} (Conf: {originalAIExpiryDateConfidence?.toFixed(2) ?? 'N/A'})</div>)}
                           <FormDescription className="pt-1">Please verify and adjust details below, or via the confirmation step if AI processed the file.</FormDescription>
                       </CardContent>
                   </Card>
