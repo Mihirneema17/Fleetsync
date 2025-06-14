@@ -202,17 +202,16 @@ export function Header() {
                   <ul className="py-1">
                     {searchResults.map((item) => (
                       <li key={item.id}>
-                        <Link href={item.link} passHref legacyBehavior>
-                          <a
-                            onClick={handleSearchItemClick}
-                            className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer"
-                          >
+                        <Link 
+                          href={item.link}
+                          onClick={handleSearchItemClick}
+                          className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                        >
                             {item.type === 'vehicle' ? <CarIcon className="h-4 w-4 text-primary" /> : <FileText className="h-4 w-4 text-primary" />}
                             <div className="flex-grow">
                               <p className="font-medium truncate">{item.title}</p>
                               {item.description && <p className="text-xs text-muted-foreground truncate">{item.description}</p>}
                             </div>
-                          </a>
                         </Link>
                       </li>
                     ))}
