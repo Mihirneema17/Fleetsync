@@ -44,6 +44,8 @@ import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { processSmartDocumentAndSave } from '@/app/vehicles/actions';
 import { useRouter } from 'next/navigation';
+import { AIConfirmationModal, type AIConfirmationData, type AIConfirmedValues } from './ai-confirmation-modal'; // Import the new modal
+import { logger } from '@/lib/logger';
 
 const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
@@ -87,7 +89,7 @@ export function SmartDocumentIngestionModal({
 }: SmartDocumentIngestionModalProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
-  const [aiResults, setAiResults] = useState<SmartIngestOutput | null>(null);
+  const [originalAIResults, setOriginalAIResults] = useState<SmartIngestOutput | null>(null); // Store original AI results
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [isSubmittingForm, setIsSubmittingForm] = useState(false);
   const { toast } = useToast();
@@ -95,6 +97,11 @@ export function SmartDocumentIngestionModal({
 
   const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
   const [isExpiryDatePickerOpen, setIsExpiryDatePickerOpen] = useState(false);
+
+  // State for AI Confirmation Modal
+  const [isAIConfirmModalOpen, setIsAIConfirmModalOpen] = useState(false);
+  const [rawAIDataForConfirm, setRawAIDataForConfirm] = useState<AIConfirmationData | null>(null);
+
 
   const form = useForm<SmartIngestFormValues>({
     resolver: zodResolver(smartIngestFormSchema),
@@ -110,21 +117,10 @@ export function SmartDocumentIngestionModal({
 
   const watchDocumentType = form.watch("documentType");
 
+  // This useEffect now primarily resets form to blank or initial state when modal opens/closes.
+  // Population with AI data is handled by handleAIConfirm.
   useEffect(() => {
-    if (aiResults) {
-      form.reset({
-        vehicleRegistrationNumber: aiResults.vehicleRegistrationNumber ? aiResults.vehicleRegistrationNumber.toUpperCase() : null,
-        documentType: aiResults.documentTypeSuggestion && DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType)
-          ? aiResults.documentTypeSuggestion as DocumentType
-          : 'Other',
-        customTypeName: (aiResults.documentTypeSuggestion === 'Other' || aiResults.documentTypeSuggestion === 'Unknown')
-          ? aiResults.customTypeNameSuggestion
-          : (aiResults.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ? aiResults.documentTypeSuggestion : null),
-        policyNumber: aiResults.policyNumber,
-        startDate: aiResults.startDate && isValid(parseISO(aiResults.startDate)) ? parseISO(aiResults.startDate) : null,
-        expiryDate: aiResults.expiryDate && isValid(parseISO(aiResults.expiryDate)) ? parseISO(aiResults.expiryDate) : null,
-      });
-    } else {
+    if (isOpen) {
       form.reset({
         vehicleRegistrationNumber: null,
         documentType: 'Insurance',
@@ -133,13 +129,32 @@ export function SmartDocumentIngestionModal({
         startDate: null,
         expiryDate: null,
       });
+      setSelectedFile(null);
+      setOriginalAIResults(null);
+      setProcessingError(null);
+      setIsProcessingAI(false);
+      setIsSubmittingForm(false);
+      setRawAIDataForConfirm(null);
+      setIsAIConfirmModalOpen(false);
     }
-  }, [aiResults, form, isOpen]);
+  }, [isOpen, form]);
+
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    setAiResults(null);
+    setOriginalAIResults(null);
+    setRawAIDataForConfirm(null);
     setProcessingError(null);
+    // Reset form fields that AI would populate, but keep user chosen type if any
+    form.reset({
+        ...form.getValues(), // Keep existing values like docType if user set it before file
+        vehicleRegistrationNumber: null,
+        customTypeName: null,
+        policyNumber: null,
+        startDate: null,
+        expiryDate: null,
+    });
+
 
     if (file) {
       if (file.size > 10 * 1024 * 1024) { // 10MB limit
@@ -168,7 +183,8 @@ export function SmartDocumentIngestionModal({
     }
     setIsProcessingAI(true);
     setProcessingError(null);
-    setAiResults(null);
+    setOriginalAIResults(null);
+    setRawAIDataForConfirm(null);
 
     try {
       const reader = new FileReader();
@@ -176,13 +192,27 @@ export function SmartDocumentIngestionModal({
         const dataUri = reader.result as string;
         try {
           const result = await smartIngestDocument({ documentDataUri: dataUri });
-          setAiResults(result);
-          toast({
-            title: "AI Processing Complete",
-            description: "Review the extracted details below and correct if necessary.",
-          });
+          setOriginalAIResults(result); // Store the original, raw AI output
+
+          // Prepare data for AIConfirmationModal (this is what's passed to the modal)
+          const aiDataForModal: AIConfirmationData = {
+            vehicleRegistrationNumber: result.vehicleRegistrationNumber,
+            vehicleRegistrationNumberConfidence: result.vehicleRegistrationNumberConfidence,
+            documentTypeSuggestion: result.documentTypeSuggestion,
+            documentTypeConfidence: result.documentTypeConfidence,
+            customTypeNameSuggestion: result.customTypeNameSuggestion,
+            policyNumber: result.policyNumber,
+            policyNumberConfidence: result.policyNumberConfidence,
+            startDate: result.startDate,
+            startDateConfidence: result.startDateConfidence,
+            expiryDate: result.expiryDate,
+            expiryDateConfidence: result.expiryDateConfidence,
+          };
+          setRawAIDataForConfirm(aiDataForModal);
+          setIsAIConfirmModalOpen(true); // Open confirmation modal
+
         } catch (e) {
-          console.error("Smart Ingest AI error:", e);
+          logger.error("Smart Ingest AI error:", e);
           setProcessingError("AI processing failed. You can still enter details manually or try a different file.");
           toast({
             title: "AI Error",
@@ -207,6 +237,43 @@ export function SmartDocumentIngestionModal({
     }
   };
 
+  const handleAIConfirm = (confirmedData: AIConfirmedValues) => {
+    logger.info("Smart Ingest - AI Data Confirmed by User:", confirmedData);
+
+    form.reset({ // Reset with confirmed values
+        vehicleRegistrationNumber: confirmedData.vehicleRegistrationNumber ? confirmedData.vehicleRegistrationNumber.toUpperCase() : null,
+        documentType: (confirmedData.documentType && DOCUMENT_TYPES.includes(confirmedData.documentType as DocumentType))
+            ? confirmedData.documentType as DocumentType
+            : 'Other', // Default to Other if type is Unknown or not in our list
+        customTypeName: confirmedData.documentType === 'Other' || confirmedData.documentType === 'Unknown'
+            ? confirmedData.customTypeName
+            : null,
+        policyNumber: confirmedData.policyNumber,
+        startDate: confirmedData.startDate,
+        expiryDate: confirmedData.expiryDate,
+    });
+    
+    if(confirmedData.documentType === 'Unknown' && !confirmedData.customTypeName && originalAIResults?.customTypeNameSuggestion){
+        form.setValue('customTypeName', originalAIResults.customTypeNameSuggestion);
+    }
+
+
+    if (confirmedData.userNotes) {
+        toast({
+            title: "User Notes Captured",
+            description: `Notes: "${confirmedData.userNotes}" (These notes are for reference and not saved with the document data yet).`,
+            duration: 5000,
+        });
+    }
+
+    setIsAIConfirmModalOpen(false);
+    setRawAIDataForConfirm(null); // Clear data after use
+    toast({
+        title: "Details Confirmed",
+        description: "AI extracted details have been applied. Please review and save.",
+    });
+  };
+
   const handleFormSubmit = async (values: SmartIngestFormValues) => {
     if (!selectedFile) {
         toast({ title: "Error", description: "No file selected.", variant: "destructive"});
@@ -217,6 +284,11 @@ export function SmartDocumentIngestionModal({
         form.setError("vehicleRegistrationNumber", { type: "manual", message: "Vehicle registration number is required."});
         return;
     }
+     if (!values.expiryDate) {
+        toast({ title: "Error", description: "Expiry date is required.", variant: "destructive"});
+        form.setError("expiryDate", { type: "manual", message: "Expiry date is required."});
+        return;
+    }
     setIsSubmittingForm(true);
 
     const clientSideDocId = generateClientSideId();
@@ -225,15 +297,14 @@ export function SmartDocumentIngestionModal({
       mockUrl: `/mock-uploads/vehicle_smart_ingest/doc_${clientSideDocId}/${encodeURIComponent(selectedFile.name)}`,
     };
     
-    // Ensure registration number is uppercase
     const finalRegNumber = values.vehicleRegistrationNumber.toUpperCase();
 
     try {
       const result = await processSmartDocumentAndSave(
         finalRegNumber,
-        { ...values, vehicleRegistrationNumber: finalRegNumber },
+        { ...values, vehicleRegistrationNumber: finalRegNumber }, // Pass form values
         mockFileDetails,
-        aiResults
+        originalAIResults // Pass original AI results for logging/auditing
       );
 
       if (result.success) {
@@ -265,9 +336,18 @@ export function SmartDocumentIngestionModal({
   const resetAndClose = () => {
     setSelectedFile(null);
     setIsProcessingAI(false);
-    setAiResults(null);
+    setOriginalAIResults(null);
+    setRawAIDataForConfirm(null);
+    setIsAIConfirmModalOpen(false);
     setProcessingError(null);
-    form.reset();
+    form.reset({ // Reset to initial defaults
+        vehicleRegistrationNumber: null,
+        documentType: 'Insurance',
+        customTypeName: null,
+        policyNumber: null,
+        startDate: null,
+        expiryDate: null,
+    });
     onClose();
   };
 
@@ -278,8 +358,11 @@ export function SmartDocumentIngestionModal({
 
   if (!isOpen) return null;
 
+  const displayFormFields = (selectedFile && !isProcessingAI && !isAIConfirmModalOpen) || (originalAIResults && !isProcessingAI && !isAIConfirmModalOpen) ;
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) resetAndClose(); }}>
+    <>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open && !isAIConfirmModalOpen) resetAndClose(); }}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="font-headline">Smart Document Upload & Review</DialogTitle>
@@ -294,7 +377,7 @@ export function SmartDocumentIngestionModal({
               type="file"
               accept=".pdf,.jpg,.jpeg,.png,.webp"
               onChange={handleFileChange}
-              disabled={isProcessingAI || isSubmittingForm}
+              disabled={isProcessingAI || isSubmittingForm || isAIConfirmModalOpen}
               className="text-sm"
             />
             {processingError && (
@@ -314,8 +397,8 @@ export function SmartDocumentIngestionModal({
                 <span>AI is processing your document... Please wait.</span>
               </div>
             )}
-
-            {(aiResults || selectedFile) && !isProcessingAI && (
+            
+            {displayFormFields && (
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 pt-4 border-t mt-4">
                    <FormField
@@ -329,10 +412,10 @@ export function SmartDocumentIngestionModal({
                             placeholder="e.g., MH12AB1234"
                             {...field}
                             value={field.value ?? ''}
-                            onChange={(e) => field.onChange(e.target.value.toUpperCase())} // Auto-uppercase
+                            onChange={(e) => field.onChange(e.target.value.toUpperCase())}
                            />
                         </FormControl>
-                        {aiResults?.vehicleRegistrationNumberConfidence !== undefined && <ConfidenceDisplay score={aiResults.vehicleRegistrationNumberConfidence} />}
+                        {originalAIResults?.vehicleRegistrationNumberConfidence !== undefined && <ConfidenceDisplay score={originalAIResults.vehicleRegistrationNumberConfidence} />}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -356,7 +439,7 @@ export function SmartDocumentIngestionModal({
                             ))}
                           </SelectContent>
                         </Select>
-                        {aiResults?.documentTypeConfidence !== undefined && <ConfidenceDisplay score={aiResults.documentTypeConfidence} />}
+                        {originalAIResults?.documentTypeConfidence !== undefined && <ConfidenceDisplay score={originalAIResults.documentTypeConfidence} />}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -372,15 +455,18 @@ export function SmartDocumentIngestionModal({
                           <FormControl>
                             <Input placeholder="e.g., Road Tax Receipt" {...field} value={field.value ?? ''} />
                           </FormControl>
+                           {originalAIResults?.customTypeNameSuggestion && originalAIResults?.documentTypeSuggestion === 'Other' && (
+                            <ConfidenceDisplay score={null} prefix={`AI Suggested Name: ${originalAIResults.customTypeNameSuggestion}`}/>
+                           )}
                           <FormMessage />
                         </FormItem>
                       )}
                     />
                   )}
 
-                  {(watchDocumentType !== 'Other' && aiResults?.customTypeNameSuggestion && aiResults?.documentTypeSuggestion && !DOCUMENT_TYPES.includes(aiResults.documentTypeSuggestion as DocumentType) ) && (
+                  {(watchDocumentType !== 'Other' && originalAIResults?.customTypeNameSuggestion && originalAIResults?.documentTypeSuggestion && !DOCUMENT_TYPES.includes(originalAIResults.documentTypeSuggestion as DocumentType) ) && (
                     <FormDescription className="text-xs text-blue-600">
-                        AI suggested an original type: '{aiResults.documentTypeSuggestion}'. It has been mapped to 'Other'. Original AI suggested custom name: '{aiResults.customTypeNameSuggestion}'. Please verify.
+                        AI suggested an original type: '{originalAIResults.documentTypeSuggestion}'. Mapped to 'Other'. Original AI suggested custom name: '{originalAIResults.customTypeNameSuggestion}'. Please verify.
                     </FormDescription>
                   )}
 
@@ -394,7 +480,7 @@ export function SmartDocumentIngestionModal({
                         <FormControl>
                           <Input placeholder="Enter policy or document number" {...field} value={field.value ?? ''} />
                         </FormControl>
-                        {aiResults?.policyNumberConfidence !== undefined && <ConfidenceDisplay score={aiResults.policyNumberConfidence} />}
+                        {originalAIResults?.policyNumberConfidence !== undefined && <ConfidenceDisplay score={originalAIResults.policyNumberConfidence} />}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -431,7 +517,7 @@ export function SmartDocumentIngestionModal({
                               />
                             </PopoverContent>
                           </Popover>
-                          {aiResults?.startDateConfidence !== undefined && <ConfidenceDisplay score={aiResults.startDateConfidence} />}
+                          {originalAIResults?.startDateConfidence !== undefined && <ConfidenceDisplay score={originalAIResults.startDateConfidence} />}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -466,7 +552,7 @@ export function SmartDocumentIngestionModal({
                                />
                             </PopoverContent>
                           </Popover>
-                          {aiResults?.expiryDateConfidence !== undefined && <ConfidenceDisplay score={aiResults.expiryDateConfidence} />}
+                          {originalAIResults?.expiryDateConfidence !== undefined && <ConfidenceDisplay score={originalAIResults.expiryDateConfidence} />}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -495,7 +581,7 @@ export function SmartDocumentIngestionModal({
           </div>
         </ScrollArea>
 
-        {(!selectedFile && !isProcessingAI && !aiResults) && (
+        {(!selectedFile && !isProcessingAI && !originalAIResults && !isAIConfirmModalOpen) && (
              <DialogFooter className="sm:justify-end pt-4">
                  <DialogClose asChild>
                     <Button type="button" variant="outline" onClick={resetAndClose}>
@@ -507,5 +593,37 @@ export function SmartDocumentIngestionModal({
         )}
       </DialogContent>
     </Dialog>
+
+    {rawAIDataForConfirm && (
+        <AIConfirmationModal
+            isOpen={isAIConfirmModalOpen}
+            onClose={() => {
+                setIsAIConfirmModalOpen(false);
+                setRawAIDataForConfirm(null);
+                 // If user cancels confirmation, keep original AI suggestions in main form (if any)
+                if (originalAIResults) {
+                    form.reset({
+                        vehicleRegistrationNumber: originalAIResults.vehicleRegistrationNumber ? originalAIResults.vehicleRegistrationNumber.toUpperCase() : null,
+                        documentType: originalAIResults.documentTypeSuggestion && DOCUMENT_TYPES.includes(originalAIResults.documentTypeSuggestion as DocumentType)
+                        ? originalAIResults.documentTypeSuggestion as DocumentType
+                        : 'Other',
+                        customTypeName: (originalAIResults.documentTypeSuggestion === 'Other' || originalAIResults.documentTypeSuggestion === 'Unknown')
+                        ? originalAIResults.customTypeNameSuggestion
+                        : (originalAIResults.documentTypeSuggestion && !DOCUMENT_TYPES.includes(originalAIResults.documentTypeSuggestion as DocumentType) ? originalAIResults.documentTypeSuggestion : null),
+                        policyNumber: originalAIResults.policyNumber,
+                        startDate: originalAIResults.startDate && isValid(parseISO(originalAIResults.startDate)) ? parseISO(originalAIResults.startDate) : null,
+                        expiryDate: originalAIResults.expiryDate && isValid(parseISO(originalAIResults.expiryDate)) ? parseISO(originalAIResults.expiryDate) : null,
+                    });
+                }
+            }}
+            aiData={rawAIDataForConfirm}
+            onConfirm={handleAIConfirm}
+            isLoading={isProcessingAI}
+            showVehicleRegistration={true}
+            showDocumentType={true}
+        />
+    )}
+    </>
   );
 }
+
