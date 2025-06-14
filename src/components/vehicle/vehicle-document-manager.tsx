@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react'; // Added useMemo
 import { useRouter } from 'next/navigation';
 import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -11,22 +11,42 @@ import { useToast } from '@/hooks/use-toast';
 import { addOrUpdateDocument } from '@/lib/data'; // Direct import of server action
 import type { ExtractExpiryDateInput, ExtractExpiryDateOutput } from '@/ai/flows/extract-expiry-date';
 import { DOCUMENT_TYPES } from '@/lib/constants'; // Import document types
+import { getLatestDocumentForType } from '@/lib/utils'; // Import utility
 
 interface VehicleDocumentManagerProps {
   vehicle: Vehicle;
   extractExpiryDateFn: (input: ExtractExpiryDateInput) => Promise<ExtractExpiryDateOutput>;
+  currentUserId: string | null; // Added currentUserId
 }
 
-export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: VehicleDocumentManagerProps) {
+export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, currentUserId }: VehicleDocumentManagerProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string } | null>(null);
+  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string, policyNumber?: string | null } | null>(null);
   const router = useRouter();
   const { toast } = useToast();
 
-  const handleOpenUploadModal = (docContext?: Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string }) => {
-    setEditingDocumentContext(docContext || { type: 'Insurance' }); // Default to Insurance if no context
+  const handleOpenUploadModal = (docContextInput?: { type: VehicleDocumentType, customTypeName?: string }) => {
+    let contextForModal: { type: VehicleDocumentType, customTypeName?: string, policyNumber?: string | null } = {
+        type: docContextInput?.type || 'Insurance', // Default to Insurance if no context
+        customTypeName: docContextInput?.customTypeName,
+        policyNumber: null,
+    };
+
+    if (docContextInput?.type) {
+        const latestExistingDoc = getLatestDocumentForType(
+            vehicle,
+            docContextInput.type,
+            docContextInput.type === 'Other' ? docContextInput.customTypeName : undefined
+        );
+        if (latestExistingDoc && latestExistingDoc.policyNumber) {
+            contextForModal.policyNumber = latestExistingDoc.policyNumber;
+        }
+    }
+    
+    setEditingDocumentContext(contextForModal);
     setIsModalOpen(true);
   };
+
 
   const handleDocumentSubmit = async (
     data: {
@@ -47,6 +67,10 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: Vehicle
     aiExpiryDateConfidence?: number | null
   ) => {
     if (!vehicle) return;
+     if (!currentUserId) {
+      toast({ title: "Authentication Error", description: "Cannot save document without user authentication.", variant: "destructive" });
+      return;
+    }
     try {
       const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
         type: data.documentType,
@@ -62,7 +86,7 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: Vehicle
         aiStartDateConfidence,
         aiExtractedDate: aiExtractedExpiryDate,
         aiConfidence: aiExpiryDateConfidence,
-      });
+      }, currentUserId); // Pass currentUserId
 
       if (updatedVehicle) {
         toast({ title: 'Success', description: `Document for ${data.documentType === 'Other' && data.customTypeName ? data.customTypeName : data.documentType} added successfully.` });
@@ -78,7 +102,7 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn }: Vehicle
     }
   };
 
-  const predefinedDocTypes = DOCUMENT_TYPES.filter(type => type !== 'Other');
+  const predefinedDocTypes = useMemo(() => DOCUMENT_TYPES.filter(type => type !== 'Other'), []);
 
   return (
     <>

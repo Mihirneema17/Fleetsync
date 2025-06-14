@@ -94,7 +94,7 @@ interface DocumentUploadModalProps {
     aiExpiryDateConfidence?: number | null
   ) => Promise<void>;
   vehicleId: string;
-  initialDocumentData?: Partial<VehicleDocument> | { type: DocumentType, customTypeName?: string } | null;
+  initialDocumentData?: Partial<Omit<VehicleDocument, 'id' | 'vehicleId' | 'status' | 'uploadedAt' | 'aiExtractedDate' | 'aiConfidence'>> & { type: DocumentType, customTypeName?: string, policyNumber?: string | null } | null;
   extractExpiryDateFn: (input: ExtractExpiryDateInput) => Promise<ExtractExpiryDateOutput>;
 }
 
@@ -136,7 +136,7 @@ export function DocumentUploadModal({
     defaultValues: {
       documentType: initialDocumentData?.type || 'Insurance',
       customTypeName: initialDocumentData?.customTypeName || '',
-      policyNumber: '',
+      policyNumber: initialDocumentData?.policyNumber || '',
       startDate: null,
       expiryDate: null,
       documentFile: null,
@@ -158,8 +158,8 @@ export function DocumentUploadModal({
     form.reset({
       documentType: initialDocumentData?.type || 'Insurance',
       customTypeName: initialDocumentData?.customTypeName || '',
-      policyNumber: '',
-      startDate: null,
+      policyNumber: initialDocumentData?.policyNumber || '', // Pre-fill policy number
+      startDate: null, // Start and expiry usually new for renewals
       expiryDate: null,
       documentFile: null,
     });
@@ -246,9 +246,10 @@ export function DocumentUploadModal({
 
   const handleAIConfirm = (confirmedData: AIConfirmedValues) => {
     logger.info("AI Data Confirmed by User in DocumentUploadModal:", confirmedData);
-    if (confirmedData.policyNumber !== undefined) form.setValue('policyNumber', confirmedData.policyNumber);
-    if (confirmedData.startDate !== undefined) form.setValue('startDate', confirmedData.startDate);
-    if (confirmedData.expiryDate !== undefined) form.setValue('expiryDate', confirmedData.expiryDate);
+    // Set form values with confirmed data, even if it's null (user might clear a field)
+    form.setValue('policyNumber', confirmedData.policyNumber);
+    form.setValue('startDate', confirmedData.startDate);
+    form.setValue('expiryDate', confirmedData.expiryDate);
     
     // Show toast for user notes if any
     if (confirmedData.userNotes) {
