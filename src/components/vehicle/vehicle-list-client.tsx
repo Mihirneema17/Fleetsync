@@ -419,7 +419,11 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
                                     vehicle.id === newVehicleId ? 'highlight-new-item' : ''
                                   )}
                             >
-                              <TableCell className="font-medium">{vehicle.registrationNumber}</TableCell>
+                              <TableCell className="font-medium">
+                                <Link href={`/vehicles/${vehicle.id}`} className="text-primary hover:underline">
+                                  {vehicle.registrationNumber}
+                                </Link>
+                              </TableCell>
                               <TableCell>{vehicle.make} {vehicle.model}</TableCell>
                               {documentTypesForTable.map(docType => (
                                 <TableCell key={docType} className="text-center">
@@ -507,3 +511,4 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     </>
   );
 }
+
