@@ -3,7 +3,8 @@ import { VehicleForm } from '@/components/vehicle/vehicle-form';
 import { addVehicle } from '@/lib/data';
 import type { Vehicle } from '@/lib/types';
 import { logger } from '@/lib/logger'; 
-import { useRouter } from 'next/navigation'; // Import for redirection within server action context is tricky
+// useRouter import removed as it's a client hook and not used in this Server Component.
+// Redirection is handled by the client-side VehicleForm.
 import { revalidatePath } from 'next/cache'; // Use for revalidating paths
 
 export default function AddVehiclePage() {
