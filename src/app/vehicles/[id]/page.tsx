@@ -1,7 +1,7 @@
 
 import { notFound } from 'next/navigation';
 import { getVehicleById } from '@/lib/data';
-import { getDocumentComplianceStatus, getLatestDocumentForType } from '@/lib/utils'; // Updated import
+import { getDocumentComplianceStatus, getLatestDocumentForType, isValidDateString } from '@/lib/utils'; // Updated import
 import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Car, CalendarDays, FileText, UploadCloud, Edit, Trash2, AlertTriangle, CheckCircle2, Clock, Loader2, History, Info, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import { DATE_FORMAT } from '@/lib/constants';
 import React from 'react';
 import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
@@ -79,7 +79,7 @@ const getEffectiveDocDisplayConfig = (
 
 export default async function VehicleDetailPage({ params }: VehicleDetailPageProps) {
   const vehicleId = params.id;
-  const vehicle = await getVehicleById(vehicleId);
+  const vehicle = await getVehicleById(vehicleId, null /* TODO: Pass currentUserId if needed for auth */);
 
   if (!vehicle) {
     notFound();
@@ -166,9 +166,9 @@ export default async function VehicleDetailPage({ params }: VehicleDetailPagePro
                                 {doc.policyNumber || <span className="text-muted-foreground italic">N/A</span>}
                             </TableCell>
                             <TableCell className="text-xs">
-                              {doc.startDate ? format(parseISO(doc.startDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
+                              {doc.startDate && isValid(parseISO(doc.startDate)) ? format(parseISO(doc.startDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
                               {' - '}
-                              {doc.expiryDate ? format(parseISO(doc.expiryDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
+                              {doc.expiryDate && isValid(parseISO(doc.expiryDate))? format(parseISO(doc.expiryDate), DATE_FORMAT) : <span className="text-muted-foreground italic">N/A</span>}
                             </TableCell>
                             <TableCell>
                               <Badge variant={displayConfig.badgeVariant} className={cn(
@@ -205,8 +205,8 @@ export default async function VehicleDetailPage({ params }: VehicleDetailPagePro
                                         <TooltipContent className="text-xs">
                                             <p className="font-semibold mb-1">AI Extracted:</p>
                                             {doc.aiExtractedPolicyNumber && <div>Policy #: {doc.aiExtractedPolicyNumber} (Conf: {doc.aiPolicyNumberConfidence?.toFixed(2) ?? 'N/A'})</div>}
-                                            {doc.aiExtractedStartDate && <div>Start: {format(parseISO(doc.aiExtractedStartDate), DATE_FORMAT)} (Conf: {doc.aiStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>}
-                                            {doc.aiExtractedDate && <div>Expiry: {format(parseISO(doc.aiExtractedDate), DATE_FORMAT)} (Conf: {doc.aiConfidence?.toFixed(2) ?? 'N/A'})</div>}
+                                            {doc.aiExtractedStartDate && isValid(parseISO(doc.aiExtractedStartDate)) && <div>Start: {format(parseISO(doc.aiExtractedStartDate), DATE_FORMAT)} (Conf: {doc.aiStartDateConfidence?.toFixed(2) ?? 'N/A'})</div>}
+                                            {doc.aiExtractedDate && isValid(parseISO(doc.aiExtractedDate)) && <div>Expiry: {format(parseISO(doc.aiExtractedDate), DATE_FORMAT)} (Conf: {doc.aiConfidence?.toFixed(2) ?? 'N/A'})</div>}
                                         </TooltipContent>
                                     </Tooltip>
                                 ) : (
