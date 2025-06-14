@@ -46,18 +46,18 @@ export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
   const { status, message } = getOverallVehicleStatus(vehicle);
 
   const statusConfig = {
-    Compliant: { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default' as const, bgColor: 'bg-green-50' },
-    ExpiringSoon: { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary' as const, bgColor: 'bg-yellow-50' },
-    Overdue: { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive' as const, bgColor: 'bg-red-50' },
-    MissingInfo: { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline' as const, bgColor: 'bg-orange-50' },
+    Compliant: { icon: CheckCircle2, color: 'text-green-600', badgeVariant: 'default' as const, bgClassName: 'bg-[var(--card-bg-compliant)]' },
+    ExpiringSoon: { icon: Clock, color: 'text-yellow-600', badgeVariant: 'secondary' as const, bgClassName: 'bg-[var(--card-bg-expiring)]' },
+    Overdue: { icon: AlertTriangle, color: 'text-red-600', badgeVariant: 'destructive' as const, bgClassName: 'bg-[var(--card-bg-overdue)]' },
+    MissingInfo: { icon: AlertTriangle, color: 'text-orange-500', badgeVariant: 'outline' as const, bgClassName: 'bg-[var(--card-bg-missing)]' },
   };
 
   const CurrentStatusIcon = statusConfig[status].icon;
 
   return (
     <Card className={cn(
-        "shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1.5", // Enhanced hover effect
-        statusConfig[status].bgColor
+        "shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1.5",
+        statusConfig[status].bgClassName
       )}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">

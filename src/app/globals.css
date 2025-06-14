@@ -54,6 +54,12 @@ body {
     --sidebar-accent-foreground: 240 10% 3.9%;
     --sidebar-border: 0 0% 88%;
     --sidebar-ring: 180 100% 25.1%; /* Use main accent for sidebar focus ring */
+
+    /* Vehicle Card Status Backgrounds - Light Theme */
+    --card-bg-compliant: 120 73% 94%; /* hsl(120, 73%, 94%) Light Green e.g. bg-green-50 */
+    --card-bg-expiring: 48 96% 94%;  /* hsl(48, 96%, 94%) Light Yellow e.g. bg-yellow-50 */
+    --card-bg-overdue: 0 100% 95%;   /* hsl(0, 100%, 95%) Light Red e.g. bg-red-50 */
+    --card-bg-missing: 25 95% 94%;  /* hsl(25, 95%, 94%) Light Orange e.g. bg-orange-50 */
   }
 
   .dark {
@@ -94,6 +100,12 @@ body {
     --sidebar-accent-foreground: 0 0% 95%;
     --sidebar-border: 240 4% 15%;
     --sidebar-ring: 180 70% 50%;
+
+    /* Vehicle Card Status Backgrounds - Dark Theme */
+    --card-bg-compliant: 140 30% 12%; /* Darker, muted Green */
+    --card-bg-expiring: 45 35% 12%;  /* Darker, muted Yellow/Orange */
+    --card-bg-overdue: 0 35% 15%;   /* Darker, muted Red */
+    --card-bg-missing: 25 30% 13%;  /* Darker, muted Orange/Brown */
   }
 }
 
