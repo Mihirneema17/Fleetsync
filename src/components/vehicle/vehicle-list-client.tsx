@@ -45,7 +45,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useToast } from "@/hooks/use-toast";
-import { handleDeleteVehicleServerAction, addOrUpdateDocument } from '@/app/vehicles/actions'; // Added addOrUpdateDocument
+// Corrected import path for addOrUpdateDocument
+import { addOrUpdateDocument } from '@/lib/data'; 
+import { handleDeleteVehicleServerAction } from '@/app/vehicles/actions';
 import { format, parseISO, differenceInDays, formatISO } from 'date-fns'; // Added formatISO
 import { DATE_FORMAT } from '@/lib/constants';
 import { motion } from 'framer-motion';
@@ -505,4 +507,3 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     </>
   );
 }
-
