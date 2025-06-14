@@ -2,8 +2,8 @@
 "use client"; 
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation'; // For reading URL params
-import { Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2, PlusCircle } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation'; // Added useRouter
+import { Car, AlertTriangle, CheckCircle2, Clock, MoreHorizontal, Trash2, PlusCircle, UploadCloud } from 'lucide-react'; // Added UploadCloud
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -45,10 +45,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useToast } from "@/hooks/use-toast";
-import { handleDeleteVehicleServerAction } from '@/app/vehicles/actions';
-import { format, parseISO, differenceInDays } from 'date-fns';
+import { handleDeleteVehicleServerAction, addOrUpdateDocument } from '@/app/vehicles/actions'; // Added addOrUpdateDocument
+import { format, parseISO, differenceInDays, formatISO } from 'date-fns'; // Added formatISO
 import { DATE_FORMAT } from '@/lib/constants';
 import { motion } from 'framer-motion';
+import { DocumentUploadModal } from '@/components/document/document-upload-modal'; // Added modal import
+import { extractExpiryDate, type ExtractExpiryDateInput, type ExtractExpiryDateOutput } from '@/ai/flows/extract-expiry-date'; // Added AI flow import
+import { useAuth } from '@/contexts/auth-context'; // Import useAuth
+
 
 const getOverallVehicleStatusBadge = (vehicle: Vehicle): { status: 'Compliant' | 'ExpiringSoon' | 'Overdue' | 'MissingInfo', variant: 'default' | 'secondary' | 'destructive' | 'outline', icon: React.ElementType } => {
   let hasOverdue = false;
@@ -111,13 +115,19 @@ interface VehicleListClientProps {
   initialVehicles: Vehicle[];
 }
 
+interface UploadModalContext {
+  vehicle: Vehicle;
+  documentType: DocumentType;
+  customTypeName?: string | null;
+}
+
 const containerVariants = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.05, // Delay between each child
-      delayChildren: 0.1,    // Initial delay for the container's children
+      staggerChildren: 0.05, 
+      delayChildren: 0.1,    
     },
   },
 };
@@ -137,6 +147,10 @@ const itemVariants = {
 
 export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const { toast } = useToast();
+  const { firebaseUser } = useAuth(); // Get current user for actions
+
   const newVehicleId = searchParams.get('new');
 
   const [vehiclesByType, setVehiclesByType] = useState<Record<string, Vehicle[]>>({});
@@ -145,7 +159,9 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
   const [isConfirmDeleteDialogOpen, setIsConfirmDeleteDialogOpen] = useState(false);
   const [openAccordionItems, setOpenAccordionItems] = useState<string[]>([]);
-  const { toast } = useToast();
+  
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [uploadModalContext, setUploadModalContext] = useState<UploadModalContext | null>(null);
 
   const groupedVehicles = useMemo(() => {
     const grouped: Record<string, Vehicle[]> = {};
@@ -163,7 +179,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     setVehiclesByType(groupedVehicles);
     const typeKeys = Object.keys(groupedVehicles);
     if (typeKeys.length > 0) {
-      const defaultOpen = typeKeys.slice(0, 2); // Open first two by default
+      const defaultOpen = typeKeys.slice(0, 2); 
       if (newVehicleId) {
         const typeOfNewVehicle = initialVehicles.find(v => v.id === newVehicleId)?.type;
         if (typeOfNewVehicle && !defaultOpen.includes(typeOfNewVehicle)) {
@@ -189,6 +205,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
       const result = await handleDeleteVehicleServerAction(vehicleToDelete.id);
       if (result.success) {
         toast({ title: "Vehicle Deleted", description: `Vehicle ${vehicleToDelete.registrationNumber} has been deleted.` });
+        router.refresh(); // Refresh data
       } else {
         toast({ title: "Error", description: result.error, variant: "destructive" });
       }
@@ -196,6 +213,70 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
       setVehicleToDelete(null);
     });
   };
+
+  const handleOpenUploadForMissing = (vehicle: Vehicle, docType: DocumentType) => {
+    setUploadModalContext({ vehicle, documentType: docType });
+    setIsUploadModalOpen(true);
+  };
+
+  const handleDocumentSubmit = async (
+    data: {
+      documentType: DocumentType;
+      customTypeName?: string;
+      policyNumber?: string | null;
+      startDate?: string | null; 
+      expiryDate: string | null; 
+      documentName?: string;
+      documentUrl?: string;
+    },
+    aiExtractedPolicyNumber?: string | null,
+    aiPolicyNumberConfidence?: number | null,
+    aiExtractedStartDate?: string | null,
+    aiStartDateConfidence?: number | null,
+    aiExtractedExpiryDate?: string | null,
+    aiExpiryDateConfidence?: number | null
+  ) => {
+    if (!uploadModalContext?.vehicle) return;
+    if (!firebaseUser?.uid) {
+        toast({ title: "Authentication Error", description: "You must be logged in to upload documents.", variant: "destructive" });
+        return;
+    }
+
+    try {
+      const updatedVehicle = await addOrUpdateDocument(
+        uploadModalContext.vehicle.id,
+        {
+          type: data.documentType,
+          customTypeName: data.customTypeName,
+          policyNumber: data.policyNumber,
+          startDate: data.startDate,
+          expiryDate: data.expiryDate,
+          documentName: data.documentName,
+          documentUrl: data.documentUrl,
+          aiExtractedPolicyNumber,
+          aiPolicyNumberConfidence,
+          aiExtractedStartDate,
+          aiStartDateConfidence,
+          aiExtractedDate: aiExtractedExpiryDate,
+          aiConfidence: aiExpiryDateConfidence,
+        },
+        firebaseUser.uid // Pass currentUserId
+      );
+
+      if (updatedVehicle) {
+        toast({ title: 'Success', description: `Document for ${data.documentType === 'Other' && data.customTypeName ? data.customTypeName : data.documentType} added successfully.` });
+        router.refresh(); 
+      } else {
+        throw new Error('Failed to update vehicle from server');
+      }
+      setIsUploadModalOpen(false);
+      setUploadModalContext(null);
+    } catch (error) {
+      console.error('Failed to submit document from vehicle list:', error);
+      toast({ title: 'Error', description: 'Failed to save document. Please try again.', variant: 'destructive' });
+    }
+  };
+
 
   const renderDocumentStatusCell = (vehicle: Vehicle, docType: DocumentType) => {
     const latestDoc = getLatestDocumentForType(vehicle, docType);
@@ -234,7 +315,17 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
         </div>
       );
     }
-    return <Badge variant="outline" className="text-xs whitespace-nowrap">Missing</Badge>;
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => handleOpenUploadForMissing(vehicle, docType)}
+        className="h-auto px-2 py-1 text-xs whitespace-nowrap"
+      >
+        <UploadCloud className="mr-1 h-3 w-3" />
+        Upload
+      </Button>
+    );
   };
   
   if (isLoading) { 
@@ -320,9 +411,9 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
                             <motion.tr 
                                 key={vehicle.id}
                                 variants={itemVariants}
-                                layout // For smooth re-flows if list order changes dynamically
+                                layout 
                                 className={cn(
-                                    "border-b transition-colors duration-150 ease-out hover:bg-muted/50 data-[state=selected]:bg-muted hover:shadow-sm",
+                                    "border-b transition-colors duration-150 ease-out hover:bg-muted/50 data-[state=selected]:bg-muted",
                                     vehicle.id === newVehicleId ? 'highlight-new-item' : ''
                                   )}
                             >
@@ -394,6 +485,24 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {isUploadModalOpen && uploadModalContext && firebaseUser && (
+        <DocumentUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => {
+            setIsUploadModalOpen(false);
+            setUploadModalContext(null);
+          }}
+          onSubmit={handleDocumentSubmit}
+          vehicleId={uploadModalContext.vehicle.id}
+          initialDocumentData={{ 
+            type: uploadModalContext.documentType, 
+            customTypeName: uploadModalContext.customTypeName 
+          }}
+          extractExpiryDateFn={extractExpiryDate}
+        />
+      )}
     </>
   );
 }
+
