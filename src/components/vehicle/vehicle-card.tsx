@@ -63,7 +63,9 @@ export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-headline flex items-center">
             <Car className="mr-2 h-5 w-5 text-primary" />
-            {vehicle.registrationNumber}
+            <Link href={`/vehicles/${vehicle.id}`} className="hover:underline text-primary">
+              {vehicle.registrationNumber}
+            </Link>
           </CardTitle>
           <Badge variant={statusConfig[status].badgeVariant} className={cn(statusConfig[status].color, 'border-' + statusConfig[status].color.replace('text-',''))}>
             {status}
