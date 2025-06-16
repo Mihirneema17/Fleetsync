@@ -67,7 +67,7 @@ export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
               {vehicle.registrationNumber}
             </Link>
           </CardTitle>
-          <Badge variant={statusConfig[status].badgeVariant} className={cn(statusConfig[status].color, 'border-' + statusConfig[status].color.replace('text-',''))}>
+          <Badge variant={statusConfig[status].badgeVariant}>
             {status}
           </Badge>
         </div>
