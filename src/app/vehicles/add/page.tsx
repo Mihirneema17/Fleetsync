@@ -1,7 +1,7 @@
 
 import { VehicleForm } from '@/components/vehicle/vehicle-form';
 import { addVehicle } from '@/lib/data';
-import type { Vehicle } from '@/lib/types';
+import type { Vehicle, VehicleDocument } from '@/lib/types';
 import { logger } from '@/lib/logger'; 
 // useRouter import removed as it's a client hook and not used in this Server Component.
 // Redirection is handled by the client-side VehicleForm.
@@ -10,7 +10,8 @@ import { revalidatePath } from 'next/cache'; // Use for revalidating paths
 export default function AddVehiclePage() {
   
   const handleSubmitWithUser = async (
-    data: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>,
+    // Updated to accept the new structure from VehicleForm
+ data: { registrationNumber: string; type: string; make: string; model: string; registrationDocumentFile?: FileList | null },
     currentUserId: string | null 
   ): Promise<{ vehicle?: Vehicle; error?: string; redirectTo?: string } | void> => {
     "use server"; 
@@ -25,8 +26,25 @@ export default function AddVehiclePage() {
     logger.info(`[SA_START] addVehicle handleSubmitWithUser invoked for user: ${currentUserId}`, { registrationNumber: data.registrationNumber });
     
     try {
-      logger.info(`[SA_INFO] addVehicle handleSubmitWithUser - Proceeding to call data.addVehicle for user: ${currentUserId}`, { registrationNumber: data.registrationNumber });
-      const newVehicle = await addVehicle(data, currentUserId); 
+      // Prepare document data if a file was uploaded
+      let registrationDocumentData: Pick<VehicleDocument, 'type' | 'documentName' | 'documentUrl'> | undefined;
+      if (data.registrationDocumentFile && data.registrationDocumentFile.length > 0) {
+        const file = data.registrationDocumentFile[0];
+        // In a real application, you would upload the file to storage here
+        // For now, we use a mock URL and the actual file name
+        registrationDocumentData = {
+          type: 'RegistrationCard',
+          documentName: file.name,
+          documentUrl: `/mock-docs/${encodeURIComponent(file.name)}`, // Using a mock URL
+        };
+        logger.info(`[SA_INFO] Processing RegistrationCard file: ${file.name}`, { registrationNumber: data.registrationNumber });
+      }
+
+      const vehicleDataToAdd = {
+        registrationNumber: data.registrationNumber,
+        type: data.type, make: data.make, model: data.model,
+      };
+      const newVehicle = await addVehicle(vehicleDataToAdd, currentUserId, registrationDocumentData); 
       
       logger.info('[SA_SUCCESS] addVehicle handleSubmitWithUser - Vehicle added successfully', { vehicleId: newVehicle.id, registrationNumber: data.registrationNumber });
       

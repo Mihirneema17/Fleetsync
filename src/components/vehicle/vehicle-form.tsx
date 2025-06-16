@@ -28,6 +28,7 @@ import { logger } from "@/lib/logger";
 const vehicleFormSchema = z.object({
   registrationNumber: z.string()
     .trim()
+    .toUpperCase()
     .min(3, "Registration number must be at least 3 characters long.")
     .max(15, "Registration number cannot exceed 15 characters.")
     .regex(
@@ -37,13 +38,16 @@ const vehicleFormSchema = z.object({
   type: z.string().trim().min(2, "Vehicle type must be at least 2 characters.").max(50),
   make: z.string().trim().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().trim().min(1, "Model must be at least 1 character.").max(50),
+  registrationDocumentFile: z.any() // Use z.any() for FileList
+    .optional()
+    .nullable(),
 });
 
-type VehicleFormValues = z.infer<typeof vehicleFormSchema>;
+export type VehicleFormValues = z.infer<typeof vehicleFormSchema>;
 
 interface VehicleFormProps {
   initialData?: Vehicle | null;
-  onSubmit: (
+  onSubmit: ( 
     data: VehicleFormValues,
     currentUserId: string | null
   ) => Promise<{ vehicle?: Vehicle; error?: string; redirectTo?: string } | void>; 
@@ -68,6 +72,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
         type: "",
         make: "",
         model: "",
+        registrationDocumentFile: undefined, // Ensure this is undefined for new forms
       };
 
   const form = useForm<VehicleFormValues>({
@@ -108,7 +113,12 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       // However, the regex itself expects uppercase, so data passed to the server action should be uppercase.
       // The existing onChange already handles this: onChange={(e) => field.onChange(e.target.value.toUpperCase())}
       const processedData = data; 
-      const result = await onSubmit(processedData, firebaseUser.uid); 
+
+      // Pass the file data along with other form values
+      const result = await onSubmit({
+        ...processedData,
+        registrationDocumentFile: data.registrationDocumentFile,
+      }, firebaseUser.uid); 
 
       if (result && result.error) {
         logger.client.error("VehicleForm: onSubmit (server action) returned an error.", { error: result.error, isEditing });
@@ -161,7 +171,6 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
                     <Input
                       placeholder="e.g., MH12AB3456"
                       {...field}
-                      onChange={(e) => field.onChange(e.target.value.toUpperCase())} 
                      />
                   </FormControl>
                   <FormDescription>Enter the vehicle's registration number (e.g., UP16CA0000). It will be auto-uppercased.</FormDescription>
@@ -220,6 +229,21 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
                 </FormItem>
               )}
             />
+             {!isEditing && ( // Only show file upload on add form
+              <FormField
+                control={form.control}
+                name="registrationDocumentFile"
+                render={({ field: { value, onChange, ...fieldProps } }) => (
+                  <FormItem>
+                    <FormLabel>Vehicle Registration Document (Optional)</FormLabel>
+                    <FormControl>
+                      <Input {...fieldProps} type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(event) => onChange(event.target.files)} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <div className="flex justify-end space-x-3 pt-4">
               <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting || isAuthLoading}>
                 Cancel

@@ -4,7 +4,7 @@ import type { DocumentType } from './types';
 // VEHICLE_TYPES now serves as a list of suggestions for the input field
 export const VEHICLE_TYPES: string[] = ['Car', 'Truck', 'Bus', 'Van', 'Motorcycle', 'SUV', 'Trailer', 'Tractor'];
 
-export const DOCUMENT_TYPES: DocumentType[] = ['Insurance', 'Fitness', 'PUC', 'AITP', 'Other'];
+export const DOCUMENT_TYPES: DocumentType[] = ['Insurance', 'Fitness', 'PUC', 'AITP', 'RegistrationCard', 'Other'];
 
 export const AI_SUPPORTED_DOCUMENT_TYPES: DocumentType[] = ['Insurance', 'Fitness', 'PUC'];
 

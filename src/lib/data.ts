@@ -377,7 +377,10 @@ export async function getVehicleById(id: string, currentUserId: string | null): 
   }
 }
 
-export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>, currentUserId: string | null): Promise<Vehicle> {
+export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'> & {
+  registrationDocument?: { name: string; url: string } | null; // Optional registration document field
+}, currentUserId: string | null): Promise<Vehicle> {
+  
   if (!db) {
     const errorMsg = "addVehicle: Firestore 'db' instance is not initialized. Cannot add vehicle.";
     logger.error(errorMsg, { vehicleData });
@@ -392,8 +395,28 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const now = Timestamp.now();
   const nowISO = formatISO(now.toDate());
 
+  const { registrationDocument, ...restVehicleData } = vehicleData;
+
   try {
     const initialDocuments: VehicleDocument[] = [];
+
+    // Add RegistrationCard document if provided
+    if (registrationDocument) {
+      initialDocuments.push({
+        id: generateId(),
+        vehicleId: '', // Will be updated later
+        type: 'RegistrationCard',
+        customTypeName: null,
+        policyNumber: null,
+        startDate: null,
+        expiryDate: null, // Registration card typically doesn't expire in the same way
+        status: 'Compliant', // Assuming upload means compliant for reg card
+        uploadedAt: nowISO,
+        documentName: registrationDocument.name,
+        documentUrl: registrationDocument.url,
+        aiExtractedPolicyNumber: null, aiPolicyNumberConfidence: null, aiExtractedStartDate: null, aiStartDateConfidence: null, aiExtractedDate: null, aiConfidence: null,
+      });
+    }
     DOCUMENT_TYPES.forEach(docType => {
       if (docType !== 'Other') { 
         initialDocuments.push({
@@ -419,7 +442,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
     });
 
     const newVehicleDataToStore = {
-      ...vehicleData,
+      ...restVehicleData,
       ownerId: currentUserId, // Associate vehicle with the user
       documents: initialDocuments, 
       createdAt: now,
@@ -434,7 +457,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
     logger.info(`Initial documents updated with vehicleId for ${docRef.id}`);
 
     const newVehicleForReturn: Vehicle = {
-      ...vehicleData,
+      ...restVehicleData,
       id: docRef.id,
       documents: finalInitialDocuments,
       createdAt: nowISO,
@@ -449,7 +472,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 
     return newVehicleForReturn;
   } catch (error) {
-    logger.error(`Error during addVehicle core logic by user ${currentUserId}:`, error, { vehicleData });
+    logger.error(`Error during addVehicle core logic by user ${currentUserId}:`, error, { restVehicleData, registrationDocument });
     throw error; 
   }
 }

@@ -2,7 +2,7 @@
 import type { User as FirebaseUser } from 'firebase/auth';
 
 export type VehicleType = string; // Changed from union to string to allow custom types
-export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'Other'; // Pollution Under Control, All India Tourist Permit
+export type DocumentType = 'Insurance' | 'Fitness' | 'PUC' | 'AITP' | 'RegistrationCard' | 'Other'; // Pollution Under Control, All India Tourist Permit
 
 export interface Vehicle {
   id: string;
