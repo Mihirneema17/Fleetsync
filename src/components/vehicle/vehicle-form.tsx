@@ -28,9 +28,12 @@ import { logger } from "@/lib/logger";
 const vehicleFormSchema = z.object({
   registrationNumber: z.string()
     .trim()
-    .min(3, "Registration number must be at least 3 characters.")
-    .max(15, "Registration number cannot exceed 15 characters.") 
-    .regex(/^[A-Z0-9]+$/, "Registration number must be alphanumeric and uppercase."),
+    .min(3, "Registration number must be at least 3 characters long.")
+    .max(15, "Registration number cannot exceed 15 characters.")
+    .regex(
+      /^(?=.*[A-Z])(?=.*\d)[A-Z][A-Z0-9]{2,14}$/,
+      "Must start with a letter, include letters & numbers, and be uppercase alphanumeric (3-15 chars)."
+    ),
   type: z.string().trim().min(2, "Vehicle type must be at least 2 characters.").max(50),
   make: z.string().trim().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().trim().min(1, "Model must be at least 1 character.").max(50),
@@ -43,7 +46,7 @@ interface VehicleFormProps {
   onSubmit: (
     data: VehicleFormValues,
     currentUserId: string | null
-  ) => Promise<{ vehicle?: Vehicle; error?: string; redirectTo?: string } | void>; // Updated return type
+  ) => Promise<{ vehicle?: Vehicle; error?: string; redirectTo?: string } | void>; 
   isEditing?: boolean;
 }
 
@@ -101,10 +104,10 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
     logger.client.info("VehicleForm: User authenticated. Proceeding with submission.", { userId: firebaseUser.uid, isEditing });
 
     try {
-      const processedData = {
-        ...data,
-        registrationNumber: data.registrationNumber.toUpperCase(),
-      };
+      // The .toUpperCase() is handled by the input's onChange, but to be sure, we can do it here too.
+      // However, the regex itself expects uppercase, so data passed to the server action should be uppercase.
+      // The existing onChange already handles this: onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+      const processedData = data; 
       const result = await onSubmit(processedData, firebaseUser.uid); 
 
       if (result && result.error) {
