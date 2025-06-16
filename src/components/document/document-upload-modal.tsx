@@ -44,6 +44,7 @@ import { Card, CardHeader, CardTitle as InfoCardTitle, CardContent } from '@/com
 import { AIConfirmationModal, type AIConfirmationData, type AIConfirmedValues } from './ai-confirmation-modal';
 import { logger } from '@/lib/logger';
 
+import { smartIngestDocument, type SmartIngestOutput } from '@/ai/flows/smart-ingest-flow';
 const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 
 const formSchema = z.object({
@@ -53,7 +54,11 @@ const formSchema = z.object({
   startDate: z.date().nullable(),
   expiryDate: z.date().nullable(),
   documentFile: z.instanceof(File).optional().nullable(),
-}).refine(data => {
+ extractedRegistrationNumber: z.string().optional().nullable(),
+  extractedMake: z.string().optional().nullable(),
+  extractedModel: z.string().optional().nullable(),
+  extractedVehicleType: z.string().optional().nullable(),
+}).refine((data) => {
   if (data.documentType === 'Other') {
     return !!data.customTypeName && data.customTypeName.trim().length > 0;
   }
@@ -91,7 +96,11 @@ interface DocumentUploadModalProps {
     aiExtractedStartDate?: string | null,
     aiStartDateConfidence?: number | null,
     aiExtractedExpiryDate?: string | null,
-    aiExpiryDateConfidence?: number | null
+ aiExpiryDateConfidence?: number | null,
+    aiExtractedRegistrationNumber?: string | null,
+ aiRegistrationNumberConfidence?: number | null,
+    aiExtractedMake?: string | null,
+    aiExtractedModel?: string | null,
   ) => Promise<void>;
   vehicleId: string;
   initialDocumentData?: Partial<Omit<VehicleDocument, 'id' | 'vehicleId' | 'status' | 'uploadedAt' | 'aiExtractedDate' | 'aiConfidence'>> & { type: DocumentType, customTypeName?: string, policyNumber?: string | null } | null;
@@ -118,6 +127,13 @@ export function DocumentUploadModal({
   const [originalAIStartDateConfidence, setOriginalAIStartDateConfidence] = useState<number | null>(null);
   const [originalAIExtractedExpiryDate, setOriginalAIExtractedExpiryDate] = useState<string | null>(null);
   const [originalAIExpiryDateConfidence, setOriginalAIExpiryDateConfidence] = useState<number | null>(null);
+
+  // State for AI extracted vehicle details (from smartIngestDocument)
+  const [originalAIExtractedRegistrationNumber, setOriginalAIExtractedRegistrationNumber] = useState<string | null>(null);
+  const [originalAIRegistrationNumberConfidence, setOriginalAIRegistrationNumberConfidence] = useState<number | null>(null);
+  const [originalAIExtractedMake, setOriginalAIExtractedMake] = useState<string | null>(null);
+  const [originalAIExtractedModel, setOriginalAIExtractedModel] = useState<string | null>(null);
+  const [originalAIExtractedVehicleType, setOriginalAIExtractedVehicleType] = useState<string | null>(null);
   
   const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
@@ -140,6 +156,10 @@ export function DocumentUploadModal({
       startDate: null,
       expiryDate: null,
       documentFile: null,
+      extractedRegistrationNumber: null,
+      extractedMake: null,
+      extractedModel: null,
+      extractedVehicleType: null,
     },
   });
 
@@ -149,6 +169,10 @@ export function DocumentUploadModal({
     setOriginalAIExtractedStartDate(null);
     setOriginalAIStartDateConfidence(null);
     setOriginalAIExtractedExpiryDate(null);
+    setOriginalAIExpiryDateConfidence(null);
+    setOriginalAIRegistrationNumberConfidence(null);
+    setOriginalAIExtractedMake(null);
+    setOriginalAIExtractedModel(null);
     setOriginalAIExpiryDateConfidence(null);
     setAiError(null);
     setRawAIDataForConfirm(null);
@@ -162,6 +186,10 @@ export function DocumentUploadModal({
       startDate: null, // Start and expiry usually new for renewals
       expiryDate: null,
       documentFile: null,
+      extractedRegistrationNumber: null,
+      extractedMake: null,
+      extractedModel: null,
+      extractedVehicleType: null,
     });
     resetAIStates();
     setSelectedFile(null);
@@ -176,66 +204,109 @@ export function DocumentUploadModal({
       form.setValue('documentFile', file);
       resetAIStates(); // Reset previous AI data on new file selection
 
-      const currentDocType = form.getValues('documentType');
-      if (AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocType)) {
-        setIsExtractingDate(true);
-        try {
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-            const dataUri = reader.result as string;
-            try {
-              const result = await extractExpiryDateFn({
-                documentDataUri: dataUri,
-                documentType: currentDocType.toLowerCase() as 'insurance' | 'fitness' | 'puc',
-              });
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const dataUri = reader.result as string;
+        const currentDocType = form.getValues('documentType');
 
-              // Store original AI results
-              setOriginalAIExtractedPolicyNumber(result.policyNumber);
-              setOriginalAIPolicyNumberConfidence(result.policyNumberConfidence);
-              setOriginalAIExtractedStartDate(result.startDate);
-              setOriginalAIStartDateConfidence(result.startDateConfidence);
-              setOriginalAIExtractedExpiryDate(result.expiryDate);
-              setOriginalAIExpiryDateConfidence(result.confidence);
+        if (AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocType)) {
+          setIsExtractingDate(true);
 
-              // Prepare data for AIConfirmationModal
-              const aiDataForModal: AIConfirmationData = {
-                policyNumber: result.policyNumber,
-                policyNumberConfidence: result.policyNumberConfidence,
-                startDate: result.startDate,
-                startDateConfidence: result.startDateConfidence,
-                expiryDate: result.expiryDate,
-                expiryDateConfidence: result.confidence,
-                // These are not provided by extractExpiryDateFn, will be undefined
-                vehicleRegistrationNumber: undefined, 
-                vehicleRegistrationNumberConfidence: undefined,
-                documentTypeSuggestion: undefined,
-                documentTypeConfidence: undefined,
-                customTypeNameSuggestion: undefined,
-              };
-              setRawAIDataForConfirm(aiDataForModal);
-              setIsAIConfirmModalOpen(true); // Open confirmation modal
+          let result: ExtractExpiryDateOutput | SmartIngestOutput | null = null;
 
-            } catch (e) {
-              logger.error("AI extraction error in DocumentUploadModal:", e);
-              setAiError("Failed to extract details using AI. Please enter manually.");
-              toast({ title: "AI Error", description: "AI data extraction failed.", variant: "destructive" });
-            } finally {
-              setIsExtractingDate(false);
+          try {
+            if (currentDocType === 'RegistrationCard') {
+               result = await smartIngestDocument({ documentDataUri: dataUri });
+
+               // Store original AI results for Registration Card
+                // smartIngestDocument provides different outputs, need to map accordingly
+               const smartIngestResult = result as SmartIngestOutput; // Cast for type safety
+               setOriginalAIExtractedPolicyNumber(smartIngestResult.vehicleRegistrationNumber); // Map vehicleRegistrationNumber to policyNumber for now
+               setOriginalAIPolicyNumberConfidence(smartIngestResult.vehicleRegistrationNumberConfidence);
+               setOriginalAIExtractedStartDate(smartIngestResult.registrationDate ? format(parseISO(smartIngestResult.registrationDate), 'yyyy-MM-dd') : null); // Map registrationDate to startDate, format to ISO
+               setOriginalAIStartDateConfidence(smartIngestResult.registrationDateConfidence); // Keep original confidence
+               // smartIngestDocument doesn't directly provide expiry date for reg cards, if needed, would require further AI
+               setOriginalAIExtractedExpiryDate(null); 
+               setOriginalAIExpiryDateConfidence(null);
+               setOriginalAIExtractedRegistrationNumber(smartIngestResult.vehicleRegistrationNumber);
+               setOriginalAIRegistrationNumberConfidence(smartIngestResult.vehicleRegistrationNumberConfidence);
+               setOriginalAIExtractedMake(smartIngestResult.vehicleMakeSuggestion);
+               setOriginalAIExtractedModel(smartIngestResult.vehicleModelSuggestion);
+               setOriginalAIExtractedVehicleType(smartIngestResult.vehicleTypeSuggestion);
+
+                // Prepare data for AIConfirmationModal - need to update modal to handle SmartIngestOutput
+               const aiDataForModal: AIConfirmationData = {
+                    policyNumber: smartIngestResult.vehicleRegistrationNumber, // Map vehicleRegistrationNumber to policyNumber
+                    policyNumberConfidence: smartIngestResult.vehicleRegistrationNumberConfidence,
+                    startDate: smartIngestResult.registrationDate, // Map registrationDate to startDate
+                    startDateConfidence: smartIngestResult.registrationDateConfidence,
+                    expiryDate: null, // No expiry date from smartIngest for reg cards
+                    expiryDateConfidence: null,
+                    // Include vehicle details from smartIngest for confirmation
+                    vehicleRegistrationNumber: smartIngestResult.registrationNumber, 
+                    vehicleRegistrationNumberConfidence: smartIngestResult.registrationNumberConfidence,
+                    documentTypeSuggestion: smartIngestResult.documentTypeSuggestion,
+                    documentTypeConfidence: smartIngestResult.documentTypeConfidence, // Corrected property name
+                    customTypeNameSuggestion: smartIngestResult.customTypeNameSuggestion, // Corrected property name
+                    extractedMake: smartIngestResult.vehicleMakeSuggestion, // Corrected property name
+                    extractedModel: smartIngestResult.vehicleModelSuggestion, // Corrected property name
+                    extractedVehicleType: smartIngestResult.vehicleType,
+                };
+ setRawAIDataForConfirm(aiDataForModal);
+                setIsAIConfirmModalOpen(true); // Open confirmation modal
+
+            } else { // Existing logic for Insurance, Fitness, PUC
+               result = await extractExpiryDateFn({
+                 documentDataUri: dataUri,
+                 documentType: currentDocType.toLowerCase() as 'insurance' | 'fitness' | 'puc',
+               });
+
+               const extractExpiryDateResult = result as ExtractExpiryDateOutput; // Cast
+
+               // Store original AI results
+               setOriginalAIExtractedPolicyNumber(extractExpiryDateResult.policyNumber);
+               setOriginalAIPolicyNumberConfidence(extractExpiryDateResult.policyNumberConfidence); // Keep existing confidence
+               setOriginalAIExtractedStartDate(extractExpiryDateResult.startDate);
+               setOriginalAIStartDateConfidence(extractExpiryDateResult.startDateConfidence);
+               setOriginalAIExtractedExpiryDate(extractExpiryDateResult.expiryDate);
+               setOriginalAIExpiryDateConfidence(extractExpiryDateResult.confidence);
+
+               // Prepare data for AIConfirmationModal (existing structure)
+               const aiDataForModal: AIConfirmationData = {
+                 policyNumber: extractExpiryDateResult.policyNumber,
+                 policyNumberConfidence: extractExpiryDateResult.policyNumberConfidence,
+                 startDate: extractExpiryDateResult.startDate,
+                 startDateConfidence: extractExpiryDateResult.startDateConfidence,
+                 expiryDate: extractExpiryDateResult.expiryDate,
+                 expiryDateConfidence: extractExpiryDateResult.confidence,
+                 vehicleRegistrationNumber: undefined,
+                 extractedMake: undefined, // Explicitly set to undefined for non-reg cards
+                 extractedModel: undefined,
+                 extractedVehicleType: undefined,
+                 vehicleRegistrationNumberConfidence: undefined,
+                 documentTypeSuggestion: extractExpiryDateResult.documentTypeSuggestion, // extractExpiryDate *can* suggest type
+                 documentTypeConfidence: undefined,
+                 customTypeNameSuggestion: undefined,
+               };
+               setRawAIDataForConfirm(aiDataForModal);
+               setIsAIConfirmModalOpen(true); // Open confirmation modal
             }
-          };
-          reader.onerror = () => {
-             setAiError("Failed to read file for AI extraction.");
-             setIsExtractingDate(false);
-             toast({ title: "File Read Error", description: "Could not read the file for AI processing.", variant: "destructive" });
-          };
-          reader.readAsDataURL(file);
-        } catch (e) {
-          logger.error("File processing error in DocumentUploadModal:", e);
-          setAiError("Error processing file.");
-          setIsExtractingDate(false);
-          toast({ title: "File Error", description: "Error processing file before AI call.", variant: "destructive" });
+
+          } catch (e) {
+            logger.error("AI extraction error in DocumentUploadModal:", e);
+            setAiError("Failed to extract details using AI. Please enter manually.");
+            toast({ title: "AI Error", description: "AI data extraction failed.", variant: "destructive" });
+          } finally {
+            setIsExtractingDate(false);
+          }
         }
-      }
+      };
+      reader.onerror = () => {
+         setAiError("Failed to read file for AI extraction.");
+         setIsExtractingDate(false);
+         toast({ title: "File Read Error", description: "Could not read the file for AI processing.", variant: "destructive" });
+      };
+      reader.readAsDataURL(file);
     } else {
       setSelectedFile(null);
       setFilePreview(null);
@@ -247,12 +318,35 @@ export function DocumentUploadModal({
   const handleAIConfirm = (confirmedData: AIConfirmedValues) => {
     logger.info("AI Data Confirmed by User in DocumentUploadModal:", confirmedData);
     // Set form values with confirmed data, even if it's null (user might clear a field)
-    form.setValue('policyNumber', confirmedData.policyNumber);
-    form.setValue('startDate', confirmedData.startDate);
-    form.setValue('expiryDate', confirmedData.expiryDate);
-    
+    form.setValue('policyNumber', confirmedData.policyNumber); // Policy # might map from reg #
+    // Only set dates if they are valid ISO strings
+    if (confirmedData.startDate && isValid(parseISO(confirmedData.startDate))) {
+        form.setValue('startDate', parseISO(confirmedData.startDate));
+    }
+    if (confirmedData.expiryDate && isValid(parseISO(confirmedData.expiryDate))) {
+        form.setValue('expiryDate', parseISO(confirmedData.expiryDate));
+    }
+
+    // Need to handle setting form values for extracted vehicle details here
+    // Set form values for extracted vehicle details if they exist in confirmed data
+    form.setValue('extractedRegistrationNumber', confirmedData.vehicleRegistrationNumber ?? null);
+    form.setValue('extractedMake', confirmedData.extractedMake ?? null);
+    form.setValue('extractedModel', confirmedData.extractedModel ?? null);
+    form.setValue('extractedVehicleType', confirmedData.extractedVehicleType ?? null);
+
+    // Also, update the original AI states with the *confirmed* values for submission
+    // This is important if the user changes values in the confirmation modal
+    setOriginalAIExtractedPolicyNumber(confirmedData.policyNumber);
+    setOriginalAIExtractedStartDate(confirmedData.startDate ? format(parseISO(confirmedData.startDate), 'yyyy-MM-dd') : null);
+    setOriginalAIExtractedExpiryDate(confirmedData.expiryDate ? format(parseISO(confirmedData.expiryDate), 'yyyy-MM-dd') : null);
+    setOriginalAIExtractedRegistrationNumber(confirmedData.vehicleRegistrationNumber);
+    setOriginalAIExtractedMake(confirmedData.extractedMake ?? null);
+    setOriginalAIExtractedModel(confirmedData.extractedModel ?? null);
+    setOriginalAIExtractedVehicleType(confirmedData.extractedVehicleType ?? null);
+
     // Show toast for user notes if any
     if (confirmedData.userNotes) {
+            try {
         toast({
             title: "User Notes Captured",
             description: `Notes: "${confirmedData.userNotes}" (These notes are for reference and not saved with the document data yet).`,
@@ -276,25 +370,34 @@ export function DocumentUploadModal({
         return;
     }
     setIsSubmitting(true);
+    // TODO: Replace mock URL logic with actual file upload logic
     const clientSideDocId = generateClientSideId();
     const mockDocumentUrl = `/mock-uploads/vehicle_${vehicleId}/doc_${clientSideDocId}/${encodeURIComponent(selectedFile.name)}`;
 
     await onSubmit(
-      {
-        documentType: values.documentType,
-        customTypeName: values.customTypeName,
-        policyNumber: values.policyNumber,
-        startDate: values.startDate ? format(values.startDate, 'yyyy-MM-dd') : null,
-        expiryDate: values.expiryDate ? format(values.expiryDate, 'yyyy-MM-dd') : null,
-        documentName: selectedFile.name,
-        documentUrl: mockDocumentUrl,
-      },
-      originalAIExtractedPolicyNumber,
-      originalAIPolicyNumberConfidence,
-      originalAIExtractedStartDate,
-      originalAIStartDateConfidence,
-      originalAIExtractedExpiryDate,
-      originalAIExpiryDateConfidence
+            {
+                documentType: values.documentType,
+                customTypeName: values.customTypeName,
+                policyNumber: values.policyNumber,
+                startDate: values.startDate ? format(values.startDate, 'yyyy-MM-dd') : null,
+                expiryDate: values.expiryDate ? format(values.expiryDate, 'yyyy-MM-dd') : null,
+                documentName: selectedFile.name,
+                documentUrl: mockDocumentUrl,
+            },
+            // Pass AI extracted data - only include if AI extraction happened
+            originalAIExtractedPolicyNumber,
+            originalAIPolicyNumberConfidence,
+            originalAIExtractedStartDate,
+            originalAIStartDateConfidence,
+            originalAIExtractedExpiryDate,
+            originalAIExpiryDateConfidence,
+            // Include vehicle details for Registration Card
+            originalAIExtractedRegistrationNumber,
+            originalAIRegistrationNumberConfidence,
+            originalAIExtractedMake,
+            originalAIExtractedModel,
+            // Note: AIConfirmationData also has extractedVehicleType, but it's not directly saved with the document in the current data structure
+            // If needed, we might need to update the Document type and add this field.
     );
     setIsSubmitting(false);
     // onClose(); // Let parent decide if modal should close (usually it does after onSubmit)
@@ -545,8 +648,14 @@ export function DocumentUploadModal({
           aiData={rawAIDataForConfirm}
           onConfirm={handleAIConfirm}
           isLoading={isExtractingDate} // Or false, as extraction is done by now
-          showVehicleRegistration={false} // Not applicable for this flow
-          showDocumentType={false}        // Not applicable for this flow
+          // Pass props to control what AI data is shown/editable in the confirmation modal
+          showPolicyNumber={AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocumentType)}
+          showDates={AI_SUPPORTED_DOCUMENT_TYPES.includes(currentDocumentType)}
+          showVehicleRegistration={currentDocumentType === 'RegistrationCard'}
+          showMakeModel={currentDocumentType === 'RegistrationCard'}
+          showVehicleType={currentDocumentType === 'RegistrationCard'}
+          showDocumentType={false} // Keep false for now, as type is selected in main modal
+          showCustomTypeName={false} // Keep false for now, as custom name is handled in main modal
         />
       )}
     </>

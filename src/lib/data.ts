@@ -153,7 +153,7 @@ async function generateAlertsForVehicle(vehicle: Vehicle, currentUserId: string 
             policyNumber: latestDoc.policyNumber || null, 
             dueDate: latestDoc.expiryDate, 
             message: alertMessage,
-            createdAt: Timestamp.now(),
+ createdAt: Timestamp.now(),
             isRead: false,
             userId: currentUserId,
           };
@@ -379,7 +379,7 @@ export async function getVehicleById(id: string, currentUserId: string | null): 
 
 export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'> & {
   registrationDocument?: { name: string; url: string } | null; // Optional registration document field
-}, currentUserId: string | null): Promise<Vehicle> {
+}, currentUserId: string | null): Promise<Vehicle | undefined> { // Changed return type to include undefined
   
   if (!db) {
     const errorMsg = "addVehicle: Firestore 'db' instance is not initialized. Cannot add vehicle.";
@@ -470,7 +470,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
       .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id} by user ${currentUserId}`))
       .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id} by user ${currentUserId}:`, err));
 
-    return newVehicleForReturn;
+    return newVehicleForReturn; // Return the newly created vehicle
   } catch (error) {
     logger.error(`Error during addVehicle core logic by user ${currentUserId}:`, error, { restVehicleData, registrationDocument });
     throw error; 

@@ -4,9 +4,13 @@ import type { DocumentType } from './types';
 // VEHICLE_TYPES now serves as a list of suggestions for the input field
 export const VEHICLE_TYPES: string[] = ['Car', 'Truck', 'Bus', 'Van', 'Motorcycle', 'SUV', 'Trailer', 'Tractor'];
 
+// Add 'RegistrationCard' to the list of all possible document types
 export const DOCUMENT_TYPES: DocumentType[] = ['Insurance', 'Fitness', 'PUC', 'AITP', 'RegistrationCard', 'Other'];
 
-export const AI_SUPPORTED_DOCUMENT_TYPES: DocumentType[] = ['Insurance', 'Fitness', 'PUC'];
+// AI_SUPPORTED_DOCUMENT_TYPES are those that SmartIngestFlow is designed to extract data from
+// Since SmartIngestFlow is used for Registration Cards in the vehicle form,
+// and could potentially be used for other types in the future, we should be mindful here. Including 'RegistrationCard' as SmartIngestFlow handles it.
+export const AI_SUPPORTED_DOCUMENT_TYPES: DocumentType[] = ['Insurance', 'Fitness', 'PUC', 'AITP', 'RegistrationCard'];
 
 export const EXPIRY_WARNING_DAYS = 30; // Documents expiring within 30 days are considered "Expiring Soon"
 

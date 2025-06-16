@@ -25,7 +25,7 @@ import React from "react";
 import { useAuth } from "@/contexts/auth-context"; // Assuming auth-context is in this path
 import { logger } from "@/lib/logger";
 import { smartIngestDocument, SmartIngestOutput } from "@/ai/flows/smart-ingest-flow";
-import { CardFooter } from "../ui/card";
+import { CardFooter } from "@/components/ui/card";
 
 const vehicleFormSchema = z.object({
   registrationNumber: z.string()
@@ -40,9 +40,6 @@ const vehicleFormSchema = z.object({
   type: z.string().trim().min(2, "Vehicle type must be at least 2 characters.").max(50),
   make: z.string().trim().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().trim().min(1, "Model must be at least 1 character.").max(50),
-  registrationDocumentFile: z.any() // Use z.any() for FileList
-    .optional()
-    .nullable(),
 });
 
 export type VehicleFormValues = z.infer<typeof vehicleFormSchema>;
@@ -51,7 +48,9 @@ interface VehicleFormProps {
   initialData?: Vehicle | null;
   onSubmit: ( 
     data: VehicleFormValues,
-    aiData?: SmartIngestOutput | null, // Add AI data to onSubmit
+ aiData?: SmartIngestOutput | null,
+ registrationDocumentDataUri?: string | null, // Pass Data URI
+ registrationDocumentFileDetails?: { name: string, type: string } | null, // Pass file details
     currentUserId: string | null
   ) => Promise<{ vehicle?: Vehicle; error?: string; redirectTo?: string } | void>; 
   isEditing?: boolean;
@@ -65,6 +64,8 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
   const [aiExtraction, setAiExtraction] = React.useState<SmartIngestOutput | null>(null);
   const [aiExtractionApplied, setAiExtractionApplied] = React.useState(false); // State to track if AI data is applied to form
   const [isExtracting, setIsExtracting] = React.useState(false);
+  const [registrationDocumentDataUri, setRegistrationDocumentDataUri] = React.useState<string | null>(null);
+  const [registrationDocumentFileDetails, setRegistrationDocumentFileDetails] = React.useState<{ name: string, type: string } | null>(null);
 
   const defaultValues = initialData
     ? {
@@ -78,13 +79,13 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
         type: "",
         make: "",
         model: "",
-        registrationDocumentFile: undefined, // Ensure this is undefined for new forms
       };
-
+      
   const form = useForm<VehicleFormValues>({
     resolver: zodResolver(vehicleFormSchema),
     defaultValues,
   });
+  const formValues = form.watch(); // Watch form values to include non-formik state
 
   const handleFileChange = async (files: FileList | null) => {
     form.setValue("registrationDocumentFile", files);
@@ -94,10 +95,13 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
     if (files && files.length > 0) {
       const file = files[0];
       if (file) {
+        setRegistrationDocumentFileDetails({ name: file.name, type: file.type });
         setIsExtracting(true);
         const reader = new FileReader();
         reader.onloadend = async () => {
           const dataUri = reader.result as string;
+          setRegistrationDocumentDataUri(dataUri);
+
           try {
             const extractionResult = await smartIngestDocument({ documentDataUri: dataUri });
             setAiExtraction(extractionResult);
@@ -107,8 +111,11 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
           } finally {
             setIsExtracting(false);
           }
+ setRegistrationDocumentDataUri(dataUri); // Store the Data URI
         };
         reader.readAsDataURL(file);
+      } else {
+ setRegistrationDocumentFileDetails(null);
       }
     }
   };
@@ -131,6 +138,20 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
     logger.client.info("VehicleForm: handleFormSubmit triggered.", { isEditing, registrationNumber: data.registrationNumber });
 
     if (isAuthLoading) {
+      // If auth is still loading, we can't verify user yet.
+      // The button should be disabled in this state, but adding an extra check here.
+      logger.client.warn("VehicleForm: Auth state is still loading. Submission deferred.", { isEditing });
+      toast({
+        title: "Please Wait",
+        description: "Authentication check in progress. Please try again shortly.",
+        variant: "default",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!firebaseUser?.uid) {
+      // If user is not authenticated after loading, prevent submission.
       logger.client.warn("VehicleForm: Auth state is still loading. Submission deferred.", { isEditing });
       toast({
         title: "Please Wait",
@@ -155,13 +176,13 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
     logger.client.info("VehicleForm: User authenticated. Proceeding with submission.", { userId: firebaseUser.uid, isEditing });
 
     try {
-      const processedData = {...data}; // Create a copy
+      const result = await onSubmit({ ...data },
+ aiExtraction,
 
-      // Pass the file data along with other form values
-      const result = await onSubmit({
-        ...processedData,
-        registrationDocumentFile: data.registrationDocumentFile,
-      }, aiExtraction, firebaseUser.uid); // Pass AI data here
+        registrationDocumentDataUri, // Pass the Data URI
+        registrationDocumentFileDetails, // Pass the file details
+        firebaseUser.uid
+      );
 
       if (result && result.error) {
         logger.client.error("VehicleForm: onSubmit (server action) returned an error.", { error: result.error, isEditing });
@@ -169,8 +190,8 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
       }
 
       toast({
-        title: isEditing ? "Vehicle Updated" : "Vehicle Added",
-        description: `Vehicle ${processedData.registrationNumber} has been successfully ${isEditing ? 'updated' : 'added'}.`,
+        title: isEditing ? "Vehicle Updated" : aiExtractionApplied ? "Vehicle and Document Added" : "Vehicle Added",
+        description: `Vehicle ${data.registrationNumber} has been successfully ${isEditing ? 'updated' : 'added'}.`,
       });
 
       if (result && result.redirectTo) {
@@ -210,7 +231,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Registration Number</FormLabel>
-                  <FormControl>
+ <FormControl>
                     <Input
                       placeholder="e.g., MH12AB3456"
                       {...field}
@@ -281,11 +302,13 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
                   <FormItem>
                     <FormLabel>
                       Vehicle Registration Document (Optional)
-                      {isExtracting && <Loader2 className="ml-2 h-4 w-4 inline-block animate-spin" />}
+                      {isExtracting && (
+                        <span className="ml-2 inline-flex items-center text-sm text-muted-foreground">
+                         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Extracting data...</span>)}
                     </FormLabel>
 
                     <FormControl>
-                      <Input {...fieldProps} type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(event) => onChange(event.target.files)} />
+                      <Input {...fieldProps} type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={async (event) => { await handleFileChange(event.target.files); }} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -366,7 +389,7 @@ export function VehicleForm({ initialData, onSubmit, isEditing = false }: Vehicl
               <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting || isAuthLoading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting || isAuthLoading || !firebaseUser || (aiExtraction && !aiExtractionApplied)}>
+              <Button type="submit" disabled={isSubmitting || isAuthLoading || !firebaseUser?.uid || (aiExtraction && !aiExtractionApplied)}>
                 {(isSubmitting || isAuthLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {isEditing ? "Save Changes" : "Add Vehicle"}
               </Button>

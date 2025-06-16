@@ -1,7 +1,6 @@
 "use client";
 
 
-import Link from 'next/link';
 // The following imports include React hooks and components
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -49,12 +48,11 @@ export default function VehiclesPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold font-headline">Manage Vehicles</h1>
-        <Link href="/vehicles/add">
-          <Button>
+        <Button onClick={() => router.push('/vehicles/add')}>
             <PlusCircle className="mr-2 h-5 w-5" />
             Add New Vehicle
           </Button>
-        </Link>
+
       </div>
 
       {showLoadingState ? (

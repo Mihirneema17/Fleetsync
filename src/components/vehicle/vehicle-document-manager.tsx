@@ -1,55 +1,33 @@
 
 "use client";
 
-import React, { useState, useMemo } from 'react'; // Added useMemo
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } from '@/lib/types';
+import type { Vehicle, VehicleDocument, DocumentType } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { UploadCloud, FilePlus2 } from 'lucide-react';
 import { DocumentUploadModal } from '@/components/document/document-upload-modal';
-import { addOrUpdateDocument } from '@/lib/data'; // Direct import of server action
-import { DOCUMENT_TYPES } from '@/lib/constants'; // Import document types
-import { getLatestDocumentForType } from '@/lib/utils'; // Import utility
+import { addOrUpdateDocument } from '@/lib/data';
+import type { SmartIngestInput, SmartIngestOutput } from '@/ai/flows/smart-ingest-flow';
+import { useToast } from "@/hooks/use-toast";
+import { useMemo } from 'react';
 
 interface VehicleDocumentManagerProps {
   vehicle: Vehicle;
   extractExpiryDateFn: (input: ExtractExpiryDateInput) => Promise<ExtractExpiryDateOutput>;
-  smartIngestDocumentFn: (input: SmartIngestInput) => Promise<SmartIngestOutput>; // Import smartIngestDocumentFn
-  currentUserId: string | null; // Added currentUserId
+  currentUserId: string | null;
 }
 
 export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, smartIngestDocumentFn, currentUserId }: VehicleDocumentManagerProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string, policyNumber?: string | null } | null>(null);
+  const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> & { type: DocumentType, customTypeName?: string | null } | null>(null);
   const router = useRouter();
   const { toast } = useToast();
-
-  const handleOpenUploadModal = (docContextInput?: { type: VehicleDocumentType, customTypeName?: string }) => {
-    let contextForModal: { type: VehicleDocumentType, customTypeName?: string, policyNumber?: string | null } = {
-        type: docContextInput?.type || 'Insurance', // Default to Insurance if no context
-        customTypeName: docContextInput?.customTypeName,
-        policyNumber: null,
-    };
-
-    if (docContextInput?.type) {
-        const latestExistingDoc = getLatestDocumentForType(
-            vehicle,
-            docContextInput.type,
-            docContextInput.type === 'Other' ? docContextInput.customTypeName : undefined
-        );
-        if (latestExistingDoc && latestExistingDoc.policyNumber) {
-            contextForModal.policyNumber = latestExistingDoc.policyNumber;
-        }
-    }
-    
-    setEditingDocumentContext(contextForModal);
-    setIsModalOpen(true);
-  };
-
+  const predefinedDocTypes = useMemo(() => DOCUMENT_TYPES.filter(type => type !== 'Other'), []);
 
   const handleDocumentSubmit = async (
     data: {
-      documentType: VehicleDocumentType;
+      documentType: DocumentType;
       customTypeName?: string;
       policyNumber?: string | null;
       startDate?: string | null; // ISO string
@@ -59,43 +37,62 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, smartInge
       documentUrl?: string;
     },
     aiExtractedPolicyNumber?: string | null,
- aiPolicyNumberConfidence?: number | null,
+    aiPolicyNumberConfidence?: number | null,
     aiExtractedStartDate?: string | null,
- aiStartDateConfidence?: number | null,
+    aiStartDateConfidence?: number | null,
     aiExtractedExpiryDate?: string | null,
- aiExpiryDateConfidence?: number | null,
- // New AI fields from smartIngestDocument for RegistrationCard
- aiExtractedRegistrationNumber?: string | null,
- aiRegistrationNumberConfidence?: number | null,
- aiExtractedMake?: string | null,
- aiMakeConfidence?: number | null,
- aiExtractedModel?: string | null,
- aiModelConfidence?: number | null,
   ) => {
     if (!vehicle) return;
 
- if (data.documentType === 'RegistrationCard' && data.documentFile) {
- // Use smartIngestDocumentFn for RegistrationCard
- try {
- const reader = new FileReader();
- reader.readAsDataURL(data.documentFile);
- reader.onloadend = async () => {
- const base64data = reader.result as string;
- const aiOutput = await smartIngestDocumentFn({ documentDataUri: base64data });
- // Continue with addOrUpdateDocument using AI output
- // Note: Vehicle details update is handled in addOrUpdateDocument
- // (We need to pass vehicle ID to addOrUpdateDocument to update vehicle fields if needed)
- // This logic might need refinement to trigger vehicle update from here or within the server action
- };
- } catch (error) {
- console.error('Error during smart ingestion:', error);
- toast({ title: 'AI Error', description: 'Failed to process document with AI.', variant: 'destructive' });
- }
- }
-     if (!currentUserId) {
+    if (!currentUserId) {
       toast({ title: "Authentication Error", description: "Cannot save document without user authentication.", variant: "destructive" });
       return;
     }
+
+    let aiData: {
+      policyNumber?: string | null;
+      startDate?: string | null;
+      expiryDate?: string | null;
+      expiryDateConfidence?: number | null;
+    } = {};
+          const base64data = reader.result as string;
+          try {
+            if (data.documentType === 'RegistrationCard') {
+              const aiOutput = await smartIngestDocumentFn({ documentDataUri: base64data });
+              extractedData = {
+                registrationNumber: aiOutput.extractedRegistrationNumber,
+                registrationNumberConfidence: aiOutput.registrationNumberConfidence,
+                make: aiOutput.extractedMake,
+                makeConfidence: aiOutput.makeConfidence,
+                model: aiOutput.extractedModel,
+                modelConfidence: aiOutput.modelConfidence,
+                // smartIngest also extracts expiry date and policy number, include them
+                policyNumber: aiOutput.extractedPolicyNumber,
+                policyNumberConfidence: aiOutput.policyNumberConfidence,
+                expiryDate: aiOutput.extractedExpiryDate,
+                expiryDateConfidence: aiOutput.expiryDateConfidence,
+              };
+            } else {
+              const aiOutput = await extractExpiryDateFn({ documentDataUri: base64data });
+              extractedData = {
+                policyNumber: aiOutput.policyNumber,
+                policyNumberConfidence: aiOutput.aiConfidence,
+                startDate: aiOutput.startDate,
+                startDateConfidence: aiOutput.aiConfidence,
+                expiryDate: aiOutput.expiryDate, // Note: extractExpiryDate uses 'extractedDate'
+                expiryDateConfidence: aiOutput.aiConfidence,
+              }; // Assuming extractExpiryDate returns these fields
+            }
+          } catch (error) {
+            console.error('Error during AI extraction:', error);
+            toast({ title: 'AI Error', description: 'Failed to process document with AI.', variant: 'destructive' });
+          } finally {
+            resolve();
+          }
+        };
+      });
+    }
+
     try {
       const updatedVehicle = await addOrUpdateDocument(vehicle.id, {
         type: data.documentType,
@@ -103,24 +100,19 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, smartInge
         policyNumber: data.policyNumber,
         startDate: data.startDate,
         expiryDate: data.expiryDate,
-        documentName: data.documentName,
+        documentName: data.documentName || data.documentFile?.name || `${data.documentType} Document`, // Use file name if no name provided
         documentUrl: data.documentUrl,
-        aiExtractedPolicyNumber,
-        aiPolicyNumberConfidence,
- aiExtractedStartDate, // These come from extractExpiryDateFn or manual input
- aiStartDateConfidence, // These come from extractExpiryDateFn or manual input
-        aiExtractedDate: aiExtractedExpiryDate,
-        aiConfidence: aiExpiryDateConfidence,
- // Pass AI extracted data from smartIngestDocumentFn if available (for RegistrationCard)
- aiExtractedRegistrationNumber: aiExtractedRegistrationNumber,
- aiRegistrationNumberConfidence: aiRegistrationNumberConfidence,
- aiExtractedMake: aiExtractedMake,
- aiMakeConfidence: aiMakeConfidence,
- aiExtractedModel: aiExtractedModel,
- aiModelConfidence: aiModelConfidence,
+        // Use AI extracted data if available, otherwise use manually entered data
+        aiExtractedPolicyNumber: extractedData?.policyNumber || aiExtractedPolicyNumber,
+        aiPolicyNumberConfidence: extractedData?.policyNumberConfidence || aiPolicyNumberConfidence,
+        aiExtractedStartDate: extractedData?.startDate || aiExtractedStartDate,
+        aiStartDateConfidence: extractedData?.startDateConfidence || aiStartDateConfidence,
+        aiExtractedDate: extractedData?.expiryDate || aiExtractedExpiryDate,
+        aiConfidence: extractedData?.expiryDateConfidence || aiExpiryDateConfidence,
       }, currentUserId); // Pass currentUserId
+
       if (updatedVehicle) {
-        toast({ title: 'Success', description: `Document for ${data.documentType === 'Other' && data.customTypeName ? data.customTypeName : data.documentType} added successfully.` });
+        toast({ title: 'Success', description: `Document for ${data.documentType === 'Other' && data.customTypeName ? data.customTypeName : data.documentType} added successfully. ${data.documentType === 'RegistrationCard' ? 'Vehicle details updated.' : ''}` });
         router.refresh(); 
       } else {
         throw new Error('Failed to update vehicle from server');
@@ -133,7 +125,16 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, smartInge
     }
   };
 
-  const predefinedDocTypes = useMemo(() => DOCUMENT_TYPES.filter(type => type !== 'Other'), []);
+  const handleOpenUploadModal = (docContextInput?: { type: DocumentType, customTypeName?: string }) => {
+    // When opening the modal, initialize context with document type and potential custom name
+    const contextForModal: Partial<VehicleDocument> & { type: DocumentType, customTypeName?: string | null } = {
+      type: docContextInput?.type || 'Insurance', // Default to Insurance if no context
+      customTypeName: docContextInput?.customTypeName,
+      policyNumber: null, // Initialize with null
+    }
+    setEditingDocumentContext(contextForModal);
+    setIsModalOpen(true);
+  };
 
   return (
     <>

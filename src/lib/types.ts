@@ -30,7 +30,6 @@ export interface VehicleDocument {
   uploadedAt: string; // ISO datetime string when this document record was created/uploaded
   
   aiExtractedDate?: string | null; 
-  aiConfidence?: number | null;   
   aiExtractedPolicyNumber?: string | null; 
   aiPolicyNumberConfidence?: number | null; 
   aiExtractedStartDate?: string | null; 
