@@ -117,7 +117,7 @@ export default async function VehicleDetailPage({ params }: VehicleDetailPagePro
       </div>
       
       {/* VehicleDocumentManager will handle the upload button and modal */}
-      <VehicleDocumentManager vehicle={vehicle} extractExpiryDateFn={extractExpiryDate} />
+      <VehicleDocumentManager vehicle={vehicle} />
 
       <Card className="shadow-md">
         <CardHeader>

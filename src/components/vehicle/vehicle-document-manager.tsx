@@ -7,19 +7,18 @@ import type { Vehicle, VehicleDocument, DocumentType as VehicleDocumentType } fr
 import { Button } from '@/components/ui/button';
 import { UploadCloud, FilePlus2 } from 'lucide-react';
 import { DocumentUploadModal } from '@/components/document/document-upload-modal';
-import { useToast } from '@/hooks/use-toast';
 import { addOrUpdateDocument } from '@/lib/data'; // Direct import of server action
-import type { ExtractExpiryDateInput, ExtractExpiryDateOutput } from '@/ai/flows/extract-expiry-date';
 import { DOCUMENT_TYPES } from '@/lib/constants'; // Import document types
 import { getLatestDocumentForType } from '@/lib/utils'; // Import utility
 
 interface VehicleDocumentManagerProps {
   vehicle: Vehicle;
   extractExpiryDateFn: (input: ExtractExpiryDateInput) => Promise<ExtractExpiryDateOutput>;
+  smartIngestDocumentFn: (input: SmartIngestInput) => Promise<SmartIngestOutput>; // Import smartIngestDocumentFn
   currentUserId: string | null; // Added currentUserId
 }
 
-export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, currentUserId }: VehicleDocumentManagerProps) {
+export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, smartIngestDocumentFn, currentUserId }: VehicleDocumentManagerProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDocumentContext, setEditingDocumentContext] = useState<Partial<VehicleDocument> | { type: VehicleDocumentType, customTypeName?: string, policyNumber?: string | null } | null>(null);
   const router = useRouter();
@@ -60,13 +59,39 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, currentUs
       documentUrl?: string;
     },
     aiExtractedPolicyNumber?: string | null,
-    aiPolicyNumberConfidence?: number | null,
+ aiPolicyNumberConfidence?: number | null,
     aiExtractedStartDate?: string | null,
-    aiStartDateConfidence?: number | null,
+ aiStartDateConfidence?: number | null,
     aiExtractedExpiryDate?: string | null,
-    aiExpiryDateConfidence?: number | null
+ aiExpiryDateConfidence?: number | null,
+ // New AI fields from smartIngestDocument for RegistrationCard
+ aiExtractedRegistrationNumber?: string | null,
+ aiRegistrationNumberConfidence?: number | null,
+ aiExtractedMake?: string | null,
+ aiMakeConfidence?: number | null,
+ aiExtractedModel?: string | null,
+ aiModelConfidence?: number | null,
   ) => {
     if (!vehicle) return;
+
+ if (data.documentType === 'RegistrationCard' && data.documentFile) {
+ // Use smartIngestDocumentFn for RegistrationCard
+ try {
+ const reader = new FileReader();
+ reader.readAsDataURL(data.documentFile);
+ reader.onloadend = async () => {
+ const base64data = reader.result as string;
+ const aiOutput = await smartIngestDocumentFn({ documentDataUri: base64data });
+ // Continue with addOrUpdateDocument using AI output
+ // Note: Vehicle details update is handled in addOrUpdateDocument
+ // (We need to pass vehicle ID to addOrUpdateDocument to update vehicle fields if needed)
+ // This logic might need refinement to trigger vehicle update from here or within the server action
+ };
+ } catch (error) {
+ console.error('Error during smart ingestion:', error);
+ toast({ title: 'AI Error', description: 'Failed to process document with AI.', variant: 'destructive' });
+ }
+ }
      if (!currentUserId) {
       toast({ title: "Authentication Error", description: "Cannot save document without user authentication.", variant: "destructive" });
       return;
@@ -82,12 +107,18 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, currentUs
         documentUrl: data.documentUrl,
         aiExtractedPolicyNumber,
         aiPolicyNumberConfidence,
-        aiExtractedStartDate,
-        aiStartDateConfidence,
+ aiExtractedStartDate, // These come from extractExpiryDateFn or manual input
+ aiStartDateConfidence, // These come from extractExpiryDateFn or manual input
         aiExtractedDate: aiExtractedExpiryDate,
         aiConfidence: aiExpiryDateConfidence,
+ // Pass AI extracted data from smartIngestDocumentFn if available (for RegistrationCard)
+ aiExtractedRegistrationNumber: aiExtractedRegistrationNumber,
+ aiRegistrationNumberConfidence: aiRegistrationNumberConfidence,
+ aiExtractedMake: aiExtractedMake,
+ aiMakeConfidence: aiMakeConfidence,
+ aiExtractedModel: aiExtractedModel,
+ aiModelConfidence: aiModelConfidence,
       }, currentUserId); // Pass currentUserId
-
       if (updatedVehicle) {
         toast({ title: 'Success', description: `Document for ${data.documentType === 'Other' && data.customTypeName ? data.customTypeName : data.documentType} added successfully.` });
         router.refresh(); 

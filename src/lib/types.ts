@@ -35,6 +35,14 @@ export interface VehicleDocument {
   aiPolicyNumberConfidence?: number | null; 
   aiExtractedStartDate?: string | null; 
   aiStartDateConfidence?: number | null; 
+
+  // AI Extracted details for Registration Card (specifically from smart-ingest-flow)
+  aiExtractedRegistrationNumber?: string | null;
+  aiRegistrationNumberConfidence?: number | null;
+  aiExtractedMake?: string | null;
+  aiMakeConfidence?: number | null;
+  aiExtractedModel?: string | null;
+  aiModelConfidence?: number | null;
 }
 
 export interface Alert {

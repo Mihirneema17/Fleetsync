@@ -594,6 +594,14 @@ export async function addOrUpdateDocument(
     aiExtractedStartDate?: string | null;
     aiStartDateConfidence?: number | null;
     aiExtractedDate?: string | null; 
+    aiConfidence?: number | null;
+    // New fields for RegistrationCard AI extraction
+    aiExtractedRegistrationNumber?: string | null;
+    aiRegistrationNumberConfidence?: number | null;
+    aiExtractedMake?: string | null;
+    aiMakeConfidence?: number | null;
+    aiExtractedModel?: string | null;
+    aiModelConfidence?: number | null;
     aiConfidence?: number | null;   
   },
   currentUserId: string | null
@@ -643,6 +651,14 @@ export async function addOrUpdateDocument(
       aiExtractedStartDate: docData.aiExtractedStartDate || null,
       aiStartDateConfidence: docData.aiStartDateConfidence === undefined ? null : docData.aiStartDateConfidence,
       aiExtractedDate: docData.aiExtractedDate || null,
+      aiConfidence: docData.aiConfidence === undefined ? null : docData.aiConfidence,
+      // Include RegistrationCard specific AI fields if type is RegistrationCard
+      aiExtractedRegistrationNumber: docData.type === 'RegistrationCard' ? (docData.aiExtractedRegistrationNumber || null) : null,
+      aiRegistrationNumberConfidence: docData.type === 'RegistrationCard' ? (docData.aiRegistrationNumberConfidence === undefined ? null : docData.aiRegistrationNumberConfidence) : null,
+      aiExtractedMake: docData.type === 'RegistrationCard' ? (docData.aiExtractedMake || null) : null,
+      aiMakeConfidence: docData.type === 'RegistrationCard' ? (docData.aiMakeConfidence === undefined ? null : docData.aiMakeConfidence) : null,
+      aiExtractedModel: docData.type === 'RegistrationCard' ? (docData.aiExtractedModel || null) : null,
+      aiModelConfidence: docData.type === 'RegistrationCard' ? (docData.aiModelConfidence === undefined ? null : docData.aiModelConfidence) : null,
       aiConfidence: docData.aiConfidence === undefined ? null : docData.aiConfidence,
     };
 
