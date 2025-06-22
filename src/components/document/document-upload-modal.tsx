@@ -50,7 +50,7 @@ const generateClientSideId = () => Math.random().toString(36).substr(2, 9);
 const formSchema = z.object({
   documentType: z.enum(DOCUMENT_TYPES as [string, ...string[]]),
   customTypeName: z.string().trim().optional(),
-  policyNumber: z.string().trim().max(50, "Policy number too long").optional().nullable(),
+  policyNumber: z.string().trim().max(50, "Policy number too long").nullable(), // Changed to .nullable()
   startDate: z.date().nullable(),
   expiryDate: z.date().nullable(),
   documentFile: z.instanceof(File).optional().nullable(),
@@ -223,7 +223,7 @@ export function DocumentUploadModal({
                const smartIngestResult = result as SmartIngestOutput; // Cast for type safety
                setOriginalAIExtractedPolicyNumber(smartIngestResult.vehicleRegistrationNumber); // Map vehicleRegistrationNumber to policyNumber for now
                setOriginalAIPolicyNumberConfidence(smartIngestResult.vehicleRegistrationNumberConfidence);
-               setOriginalAIExtractedStartDate(smartIngestResult.registrationDate ? format(parseISO(smartIngestResult.registrationDate), 'yyyy-MM-dd') : null); // Map registrationDate to startDate, format to ISO
+               setOriginalAIExtractedStartDate(smartIngestResult.registrationDate ?? null); // Map registrationDate to startDate, keep as string or null
                setOriginalAIStartDateConfidence(smartIngestResult.registrationDateConfidence); // Keep original confidence
                // smartIngestDocument doesn't directly provide expiry date for reg cards, if needed, would require further AI
                setOriginalAIExtractedExpiryDate(null); 
@@ -235,7 +235,7 @@ export function DocumentUploadModal({
                setOriginalAIExtractedVehicleType(smartIngestResult.vehicleTypeSuggestion);
 
                 // Prepare data for AIConfirmationModal - need to update modal to handle SmartIngestOutput
-               const aiDataForModal: AIConfirmationData = {
+               const aiDataForModal: AIConfirmationData = { // Ensure this structure matches AIConfirmationData
                     policyNumber: smartIngestResult.vehicleRegistrationNumber, // Map vehicleRegistrationNumber to policyNumber
                     policyNumberConfidence: smartIngestResult.vehicleRegistrationNumberConfidence,
                     startDate: smartIngestResult.registrationDate, // Map registrationDate to startDate
@@ -243,14 +243,14 @@ export function DocumentUploadModal({
                     expiryDate: null, // No expiry date from smartIngest for reg cards
                     expiryDateConfidence: null,
                     // Include vehicle details from smartIngest for confirmation
-                    vehicleRegistrationNumber: smartIngestResult.registrationNumber, 
+                    vehicleRegistrationNumber: smartIngestResult.vehicleRegistrationNumber, // Corrected mapping
                     vehicleRegistrationNumberConfidence: smartIngestResult.registrationNumberConfidence,
                     documentTypeSuggestion: smartIngestResult.documentTypeSuggestion,
                     documentTypeConfidence: smartIngestResult.documentTypeConfidence, // Corrected property name
                     customTypeNameSuggestion: smartIngestResult.customTypeNameSuggestion, // Corrected property name
                     extractedMake: smartIngestResult.vehicleMakeSuggestion, // Corrected property name
                     extractedModel: smartIngestResult.vehicleModelSuggestion, // Corrected property name
-                    extractedVehicleType: smartIngestResult.vehicleType,
+                    extractedVehicleType: smartIngestResult.vehicleTypeSuggestion, // Corrected mapping
                 };
  setRawAIDataForConfirm(aiDataForModal);
                 setIsAIConfirmModalOpen(true); // Open confirmation modal
@@ -266,7 +266,7 @@ export function DocumentUploadModal({
                // Store original AI results
                setOriginalAIExtractedPolicyNumber(extractExpiryDateResult.policyNumber);
                setOriginalAIPolicyNumberConfidence(extractExpiryDateResult.policyNumberConfidence); // Keep existing confidence
-               setOriginalAIExtractedStartDate(extractExpiryDateResult.startDate);
+               setOriginalAIExtractedStartDate(extractExpiryDateResult.startDate ?? null); // Keep as string or null
                setOriginalAIStartDateConfidence(extractExpiryDateResult.startDateConfidence);
                setOriginalAIExtractedExpiryDate(extractExpiryDateResult.expiryDate);
                setOriginalAIExpiryDateConfidence(extractExpiryDateResult.confidence);
@@ -337,8 +337,8 @@ export function DocumentUploadModal({
     // Also, update the original AI states with the *confirmed* values for submission
     // This is important if the user changes values in the confirmation modal
     setOriginalAIExtractedPolicyNumber(confirmedData.policyNumber);
-    setOriginalAIExtractedStartDate(confirmedData.startDate ? format(parseISO(confirmedData.startDate), 'yyyy-MM-dd') : null);
-    setOriginalAIExtractedExpiryDate(confirmedData.expiryDate ? format(parseISO(confirmedData.expiryDate), 'yyyy-MM-dd') : null);
+    setOriginalAIExtractedStartDate(confirmedData.startDate); // Keep as string or null
+    setOriginalAIExtractedExpiryDate(confirmedData.expiryDate); // Keep as string or null
     setOriginalAIExtractedRegistrationNumber(confirmedData.vehicleRegistrationNumber);
     setOriginalAIExtractedMake(confirmedData.extractedMake ?? null);
     setOriginalAIExtractedModel(confirmedData.extractedModel ?? null);
@@ -387,7 +387,7 @@ export function DocumentUploadModal({
             // Pass AI extracted data - only include if AI extraction happened
             originalAIExtractedPolicyNumber,
             originalAIPolicyNumberConfidence,
-            originalAIExtractedStartDate,
+            originalAIExtractedStartDate, // Pass the string/null
             originalAIStartDateConfidence,
             originalAIExtractedExpiryDate,
             originalAIExpiryDateConfidence,

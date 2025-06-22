@@ -48,7 +48,7 @@ import { useToast } from "@/hooks/use-toast";
 // Corrected import path for addOrUpdateDocument
 import { addOrUpdateDocument } from '@/lib/data'; 
 import { handleDeleteVehicleServerAction } from '@/app/vehicles/actions';
-import { format, parseISO, differenceInDays, formatISO } from 'date-fns'; // Added formatISO
+import { format, parseISO, differenceInDays, formatISO, isValid } from 'date-fns'; // Added isValid
 import { DATE_FORMAT } from '@/lib/constants';
 import { motion } from 'framer-motion';
 import { DocumentUploadModal } from '@/components/document/document-upload-modal'; // Added modal import
@@ -284,6 +284,21 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     const latestDoc = getLatestDocumentForType(vehicle, docType);
     
     if (latestDoc && latestDoc.expiryDate) {
+      // Defensive check before formatting. Should be safe due to utils update, but good practice.
+      if (!isValid(parseISO(latestDoc.expiryDate))) {
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleOpenUploadForMissing(vehicle, docType)}
+            className="h-auto px-2 py-1 text-xs whitespace-nowrap border-destructive text-destructive"
+          >
+            <AlertTriangle className="mr-1 h-3 w-3" />
+            Invalid Date
+          </Button>
+        );
+      }
+
       const status = getDocumentComplianceStatus(latestDoc.expiryDate);
       const config = getStatusConfigForCell(status);
       const StatusIcon = config.icon;
@@ -511,4 +526,3 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     </>
   );
 }
-

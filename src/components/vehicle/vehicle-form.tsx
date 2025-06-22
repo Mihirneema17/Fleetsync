@@ -40,6 +40,7 @@ const vehicleFormSchema = z.object({
   type: z.string().trim().min(2, "Vehicle type must be at least 2 characters.").max(50),
   make: z.string().trim().min(2, "Make must be at least 2 characters.").max(50),
   model: z.string().trim().min(1, "Model must be at least 1 character.").max(50),
+  registrationDocumentFile: z.any().optional(),
 });
 
 export type VehicleFormValues = z.infer<typeof vehicleFormSchema>;

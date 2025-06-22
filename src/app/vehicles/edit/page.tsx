@@ -5,9 +5,7 @@ import type { Vehicle } from '@/lib/types';
 import { revalidatePath } from 'next/cache';
 import { logger } from '@/lib/logger'; // Ensure logger is imported
 import type { SmartIngestOutput } from '@/ai/flows/smart-ingest-flow'; // Import SmartIngestOutput
-import { VehicleDocumentManager } from '@/components/vehicle/vehicle-document-manager';
-import { extractExpiryDate } from '@/ai/flows/extract-expiry-date';
-import { useAuth } from '@/contexts/auth-context'; // Import useAuth
+import VehicleDetailsClient from '@/components/vehicle/vehicle-details-client'; // Added
 
 export default async function EditVehiclePage({ params }: { params: { id: string } }) {
   const vehicle = await getVehicleById(params.id, null /* Fetching initial data, auth check on update */);
@@ -16,11 +14,6 @@ export default async function EditVehiclePage({ params }: { params: { id: string
     notFound();
   }
 
-  // Fetch currentUserId within the Server Component
-  const { firebaseUser } = useAuth(); // Note: useAuth is a Client Hook, cannot directly use here.
-  // We need to pass currentUserId from the client or refactor auth fetching.
-  // For now, let's assume a way to get currentUserId server-side or pass it.
-  const currentUserId = firebaseUser?.uid; // Placeholder: This won't work directly in a Server Component
 
   const handleSubmitServerAction = async (
     data: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'>, // Core vehicle data
@@ -76,15 +69,8 @@ export default async function EditVehiclePage({ params }: { params: { id: string
         isEditing={true}
       />
 
-      {/* VehicleDocumentManager for adding/managing documents */}
-      {/* Pass the vehicle data, AI function, and user ID */}
-      {/* IMPORTANT: Need to ensure currentUserId is correctly fetched/passed in this Server Component */}
-      {/* If currentUserId cannot be reliably fetched here, VehicleDocumentManager might need */}
-      {/* to fetch it on the client-side or receive it as a prop from a Client Component wrapper. */}
-      <VehicleDocumentManager
-        vehicle={vehicle}
-        extractExpiryDate={extractExpiryDate} // Pass the AI function
-      />
+      {/* VehicleDocumentManager is now handled by VehicleDetailsClient */}
+      <VehicleDetailsClient vehicleId={params.id} />
     </div>
   );
 }

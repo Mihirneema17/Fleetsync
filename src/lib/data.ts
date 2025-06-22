@@ -22,6 +22,7 @@ import { DOCUMENT_TYPES, EXPIRY_WARNING_DAYS, DATE_FORMAT } from './constants';
 import { format, formatISO, addDays, isBefore, parseISO, differenceInDays } from 'date-fns';
 import { logger } from './logger'; // Import the logger
 import { getDocumentComplianceStatus, getLatestDocumentForType } from './utils'; // Import from utils
+import type { SmartIngestOutput } from '@/ai/flows/smart-ingest-flow'; // Import SmartIngestOutput
 
 // Diagnostic check for db initialization
 if (!db) {
@@ -154,14 +155,14 @@ async function generateAlertsForVehicle(vehicle: Vehicle, currentUserId: string 
             dueDate: latestDoc.expiryDate, 
             message: alertMessage,
  createdAt: Timestamp.now(),
-            isRead: false,
+ isRead: false,
             userId: currentUserId,
           };
           const alertDocRef = doc(collection(db, 'alerts'), newAlertId);
           await setDoc(alertDocRef, { id: newAlertId, ...newAlertData }); // Use setDoc with explicit ID
           logger.info(`Generated ${currentStatus} alert for vehicle ${vehicle.id}, doc type ${typeKey}`, { alertId: newAlertId });
         }
-      }
+ }
     }
     logger.info(`Finished alert generation for vehicle ${vehicle.id}`);
   } catch (error) {
@@ -204,7 +205,7 @@ export async function getAlerts(currentUserId: string | null, onlyUnread: boolea
         vehicleId: data.vehicleId || '',
         vehicleRegistration: data.vehicleRegistration || '',
         documentType: data.documentType || 'Other',
-        customDocumentTypeName: data.customDocumentTypeName || undefined,
+ customTypeName: data.customTypeName || undefined,
         dueDate: data.dueDate, 
         message: data.message || '',
         createdAt: (data.createdAt as Timestamp)?.toDate ? formatISO((data.createdAt as Timestamp).toDate()) : new Date(0).toISOString(),
@@ -240,7 +241,7 @@ export async function markAlertAsRead(alertId: string, currentUserId: string | n
     internalLogAuditEvent('MARK_ALERT_READ', 'ALERT', currentUserId, alertId, { documentType: alertData.documentType, vehicleRegistration: alertData.vehicleRegistration }, alertData.vehicleRegistration);
     logger.info(`Alert ${alertId} marked as read by user ${currentUserId}.`);
     return true;
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`Error marking alert ${alertId} as read by user ${currentUserId}:`, error);
     return false;
   }
@@ -379,7 +380,8 @@ export async function getVehicleById(id: string, currentUserId: string | null): 
 
 export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' | 'createdAt' | 'updatedAt'> & {
   registrationDocument?: { name: string; url: string } | null; // Optional registration document field
-}, currentUserId: string | null): Promise<Vehicle | undefined> { // Changed return type to include undefined
+  aiExtraction?: SmartIngestOutput | null; // Optional AI extraction data
+}, currentUserId: string | null): Promise<Vehicle | undefined> {
   
   if (!db) {
     const errorMsg = "addVehicle: Firestore 'db' instance is not initialized. Cannot add vehicle.";
@@ -395,7 +397,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
   const now = Timestamp.now();
   const nowISO = formatISO(now.toDate());
 
-  const { registrationDocument, ...restVehicleData } = vehicleData;
+  const { registrationDocument, aiExtraction, ...restVehicleData } = vehicleData;
 
   try {
     const initialDocuments: VehicleDocument[] = [];
@@ -414,7 +416,13 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
         uploadedAt: nowISO,
         documentName: registrationDocument.name,
         documentUrl: registrationDocument.url,
-        aiExtractedPolicyNumber: null, aiPolicyNumberConfidence: null, aiExtractedStartDate: null, aiStartDateConfidence: null, aiExtractedDate: null, aiConfidence: null,
+ aiExtractedPolicyNumber: aiExtraction?.policyNumber?.value || null,
+        aiPolicyNumberConfidence: aiExtraction?.policyNumber?.confidence ?? null,
+        aiExtractedStartDate: aiExtraction?.startDate?.value || null,
+        aiStartDateConfidence: aiExtraction?.startDate?.confidence ?? null,
+        aiExtractedDate: aiExtraction?.expiryDate?.value || null,
+        aiConfidence: aiExtraction?.expiryDate?.confidence ?? null,
+        // Specific to RegistrationCard if needed later, add here
       });
     }
     DOCUMENT_TYPES.forEach(docType => {
@@ -466,7 +474,7 @@ export async function addVehicle(vehicleData: Omit<Vehicle, 'id' | 'documents' |
 
     internalLogAuditEvent('CREATE_VEHICLE', 'VEHICLE', currentUserId, docRef.id, { ...vehicleData }, vehicleData.registrationNumber);
 
-    generateAlertsForVehicle(newVehicleForReturn, currentUserId)
+    generateAlertsForVehicle(newVehicleForReturn, currentUserId as string)
       .then(() => logger.info(`Background alert generation initiated for new vehicle ${newVehicleForReturn.id} by user ${currentUserId}`))
       .catch(err => logger.error(`Background alert generation failed for new vehicle ${newVehicleForReturn.id} by user ${currentUserId}:`, err));
 
@@ -524,7 +532,7 @@ export async function updateVehicle(id: string, updates: Partial<Omit<Vehicle, '
 
     const updatedVehicle = await getVehicleById(id, currentUserId);
     if (updatedVehicle) {
-      generateAlertsForVehicle(updatedVehicle, currentUserId)
+      generateAlertsForVehicle(updatedVehicle, currentUserId as string)
         .then(() => logger.info(`Background alert generation initiated for updated vehicle ${updatedVehicle.id} by user ${currentUserId}`))
         .catch(err => logger.error(`Background alert generation failed for updated vehicle ${updatedVehicle.id} by user ${currentUserId}:`, err));
     }
@@ -691,7 +699,7 @@ export async function addOrUpdateDocument(
 
     internalLogAuditEvent('UPLOAD_DOCUMENT', 'DOCUMENT', currentUserId, newDocId, {
         vehicleId: vehicleId,
-        documentType: newDocument.type,
+ documentType: newDocument.type,
         customTypeName: newDocument.customTypeName,
         policyNumber: newDocument.policyNumber,
         expiryDate: newDocument.expiryDate,
@@ -703,7 +711,7 @@ export async function addOrUpdateDocument(
 
     const finalUpdatedVehicle = await getVehicleById(vehicleId, currentUserId);
     if (finalUpdatedVehicle) {
-      generateAlertsForVehicle(finalUpdatedVehicle, currentUserId)
+      generateAlertsForVehicle(finalUpdatedVehicle, currentUserId as string)
         .then(() => logger.info(`Background alert generation initiated for document update on vehicle ${finalUpdatedVehicle.id} by user ${currentUserId}`))
         .catch(err => logger.error(`Background alert generation failed for document update on vehicle ${finalUpdatedVehicle.id} by user ${currentUserId}:`, err));
     }

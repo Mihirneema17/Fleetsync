@@ -30,22 +30,15 @@ export default function AddVehiclePage() {
     logger.info(`[SA_START] addVehicle handleSubmitWithUser invoked for user: ${currentUserId}`, { registrationNumber: data.registrationNumber });
 
     // Prepare registration document data if a file was provided
-    let registrationDocument = null;
+    let registrationDocument: { name: string; url: string } | null = null;
     if (fileDetails && dataUri) { // Check if both fileDetails and dataUri are present (now passed as separate params)
       registrationDocument = {
         name: fileDetails.name,
         url: dataUri, // Using dataUri as mock URL for now
       };
-      logger.info(`[SA_INFO] Preparing RegistrationCard data for addVehicle: ${fileDetails.name}`, { registrationNumber: data.registrationNumber });
+      logger.info(`[SA_INFO] Preparing RegistrationCard data for addVehicle: ${fileDetails.name}`, { registrationNumber: data.registrationNumber, aiData: aiData ? 'present' : 'absent' });
     }
 
-    try {
-      const vehicleDataToAdd = {
-        registrationNumber: data.registrationNumber,
-        type: data.type, make: data.make, model: data.model,
-      };
-
-      // Pass AI data and registrationDocument to addVehicle
       const newVehicle = await addVehicle(
         {
           ...vehicleDataToAdd,
@@ -57,6 +50,9 @@ export default function AddVehiclePage() {
       return { vehicle: newVehicle, redirectTo: `/vehicles?new=${newVehicle.id}` };
 
     } catch (error) {
+  };
+
+    try {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while adding the vehicle.";
       logger.error('[SA_CATCH_ERROR] Failed to add vehicle in handleSubmitWithUser Server Action', { originalData: data, currentUserId, errorDetails: String(error) });
       return { error: errorMessage };
