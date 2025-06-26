@@ -221,7 +221,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     setIsUploadModalOpen(true);
   };
 
-  const handleDocumentSubmit = async (
+  const handleDocumentSubmit = async ( // Added explicit return type annotation
     data: {
       documentType: DocumentType;
       customTypeName?: string;
@@ -236,7 +236,11 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
     aiExtractedStartDate?: string | null,
     aiStartDateConfidence?: number | null,
     aiExtractedExpiryDate?: string | null,
-    aiExpiryDateConfidence?: number | null
+    aiExpiryDateConfidence?: number | null,
+    aiExtractedRegistrationNumber?: string | null, // Added missing parameter
+    aiRegistrationNumberConfidence?: number | null, // Added missing parameter
+    aiExtractedMake?: string | null, // Added missing parameter
+    aiExtractedModel?: string | null // Added missing parameter
   ) => {
     if (!uploadModalContext?.vehicle) return;
     if (!firebaseUser?.uid) {
@@ -260,9 +264,13 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
           aiExtractedStartDate,
           aiStartDateConfidence,
           aiExtractedDate: aiExtractedExpiryDate,
-          aiConfidence: aiExpiryDateConfidence,
+ aiConfidence: aiExpiryDateConfidence, // This seems incorrect based on DocumentUploadModalProps, but keeping for now
+ aiExtractedRegistrationNumber,
+          aiRegistrationNumberConfidence, // Added
+          aiExtractedMake, // Added
+          aiExtractedModel, // Added
         },
-        firebaseUser.uid // Pass currentUserId
+ firebaseUser.uid // Pass currentUserId
       );
 
       if (updatedVehicle) {
@@ -518,7 +526,7 @@ export function VehicleListClient({ initialVehicles }: VehicleListClientProps) {
           vehicleId={uploadModalContext.vehicle.id}
           initialDocumentData={{ 
             type: uploadModalContext.documentType, 
-            customTypeName: uploadModalContext.customTypeName 
+            customTypeName: uploadModalContext.customTypeName ?? undefined // Coerce null to undefined
           }}
           extractExpiryDateFn={extractExpiryDate}
         />

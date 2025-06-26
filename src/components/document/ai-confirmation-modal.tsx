@@ -30,7 +30,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CalendarIcon, Loader2, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, parseISO, isValid } from 'date-fns';
-import { DATE_FORMAT, DOCUMENT_TYPES } from '@/lib/constants';
+import { DATE_FORMAT, DOCUMENT_TYPES, VEHICLE_TYPES } from '@/lib/constants';
 import type { DocumentType } from '@/lib/types';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle as InfoCardTitle } from '@/components/ui/card'; // Renamed to avoid conflict
@@ -50,6 +50,14 @@ export interface AIConfirmationData {
   startDateConfidence?: number | null;
   expiryDate?: string | null; // ISO Date string from AI
   expiryDateConfidence?: number | null; // For expiryDate in SmartIngest, 'confidence' in ExtractExpiryDate
+
+  // New vehicle detail fields
+  vehicleMakeSuggestion?: string | null;
+  vehicleMakeConfidence?: number | null;
+  vehicleModelSuggestion?: string | null;
+  vehicleModelConfidence?: number | null;
+  vehicleTypeSuggestion?: string | null;
+  vehicleTypeConfidence?: number | null;
 }
 
 export interface AIConfirmedValues {
@@ -60,6 +68,11 @@ export interface AIConfirmedValues {
   startDate?: Date | null; // Date object for form
   expiryDate?: Date | null; // Date object for form
   userNotes?: string | null;
+
+  // New vehicle detail fields
+  vehicleMake?: string | null;
+  vehicleModel?: string | null;
+  vehicleType?: string | null;
 }
 
 // Schema for the confirmation form
@@ -71,6 +84,12 @@ const confirmationFormSchema = z.object({
   startDate: z.date().optional().nullable(),
   expiryDate: z.date().optional().nullable(),
   userNotes: z.string().trim().max(250, "Notes too long.").optional().nullable(),
+
+  // New vehicle detail fields
+  vehicleMake: z.string().trim().min(2, "Make must be at least 2 chars.").max(50, "Make too long.").optional().nullable(),
+  vehicleModel: z.string().trim().min(1, "Model must be at least 1 char.").max(50, "Model too long.").optional().nullable(),
+  vehicleType: z.string().trim().min(2, "Type must be at least 2 chars.").max(50, "Type too long.").optional().nullable(),
+
 }).refine(data => {
   if (data.documentType === 'Other') {
     return !!data.customTypeName && data.customTypeName.trim().length > 0;
@@ -100,6 +119,7 @@ interface AIConfirmationModalProps {
   // To control which fields are shown/editable
   showVehicleRegistration?: boolean;
   showDocumentType?: boolean;
+  showVehicleDetails?: boolean;
 }
 
 export function AIConfirmationModal({
@@ -110,6 +130,7 @@ export function AIConfirmationModal({
   isLoading = false,
   showVehicleRegistration = false,
   showDocumentType = false,
+  showVehicleDetails = false,
 }: AIConfirmationModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
@@ -134,6 +155,10 @@ export function AIConfirmationModal({
         startDate: aiData.startDate && isValid(parseISO(aiData.startDate)) ? parseISO(aiData.startDate) : null,
         expiryDate: aiData.expiryDate && isValid(parseISO(aiData.expiryDate)) ? parseISO(aiData.expiryDate) : null,
         userNotes: '',
+        // Set new vehicle details
+        vehicleMake: aiData.vehicleMakeSuggestion,
+        vehicleModel: aiData.vehicleModelSuggestion,
+        vehicleType: aiData.vehicleTypeSuggestion,
       });
     }
   }, [isOpen, aiData, form, showDocumentType]);
@@ -149,7 +174,8 @@ export function AIConfirmationModal({
 
   const ConfidenceDisplay: React.FC<{ score: number | null | undefined; prefix?: string }> = ({ score, prefix = "AI Conf:" }) => {
     if (score === null || score === undefined) return null;
-    return <FormDescription className="text-xs text-blue-600 mt-0.5">{prefix} {(score * 100).toFixed(0)}%</FormDescription>;
+    const formattedScore = (score * 100).toFixed(0);
+    return <FormDescription className="text-xs text-blue-600 mt-0.5">{prefix} {formattedScore}%</FormDescription>;
   };
 
   if (!isOpen) return null;
@@ -196,6 +222,62 @@ export function AIConfirmationModal({
                         )}
                     />
                 )}
+                
+                {showVehicleDetails && (
+                  <div className='space-y-4 p-4 border rounded-md'>
+                    <h3 className='text-sm font-medium text-muted-foreground'>Vehicle Details</h3>
+                    <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                      <FormField
+                          control={form.control}
+                          name="vehicleMake"
+                          render={({ field }) => (
+                          <FormItem>
+                              <FormLabel>Vehicle Make</FormLabel>
+                              <FormControl>
+                                  <Input placeholder="e.g., Tata Motors" {...field} value={field.value ?? ''} />
+                              </FormControl>
+                              <ConfidenceDisplay score={aiData.vehicleMakeConfidence} />
+                              <FormMessage />
+                          </FormItem>
+                          )}
+                      />
+                      <FormField
+                          control={form.control}
+                          name="vehicleModel"
+                          render={({ field }) => (
+                          <FormItem>
+                              <FormLabel>Vehicle Model</FormLabel>
+                              <FormControl>
+                                  <Input placeholder="e.g., Nexon" {...field} value={field.value ?? ''} />
+                              </FormControl>
+                              <ConfidenceDisplay score={aiData.vehicleModelConfidence} />
+                              <FormMessage />
+                          </FormItem>
+                          )}
+                      />
+                      </div>
+                      <FormField
+                          control={form.control}
+                          name="vehicleType"
+                          render={({ field }) => (
+                          <FormItem>
+                              <FormLabel>Vehicle Type</FormLabel>
+                              <FormControl>
+                                  <Input placeholder="e.g., Car, SUV" {...field} value={field.value ?? ''} list="vehicle-type-suggestions" />
+                              </FormControl>
+                               <datalist id="vehicle-type-suggestions">
+                                {VEHICLE_TYPES.map((type) => (
+                                  <option key={type} value={type} />
+                                ))}
+                              </datalist>
+                              <ConfidenceDisplay score={aiData.vehicleTypeConfidence} />
+                              <FormMessage />
+                          </FormItem>
+                          )}
+                      />
+                  </div>
+                )}
+
 
                 {showDocumentType && (
                     <>
@@ -320,7 +402,7 @@ export function AIConfirmationModal({
                             />
                             </PopoverContent>
                         </Popover>
-                        <ConfidenceDisplay score={aiData.expiryDateConfidence ?? aiData.policyNumberConfidence} /> {/* Fallback for older flow name */}
+                        <ConfidenceDisplay score={aiData.expiryDateConfidence} />
                         <FormMessage />
                         </FormItem>
                     )}
@@ -367,5 +449,3 @@ export function AIConfirmationModal({
     </Dialog>
   );
 }
-
-    

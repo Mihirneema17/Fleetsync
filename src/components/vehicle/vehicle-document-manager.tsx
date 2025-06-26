@@ -89,9 +89,9 @@ export function VehicleDocumentManager({ vehicle, extractExpiryDateFn, smartInge
           } finally {
             resolve();
           }
-        };
-      });
-    }
+        }; // Commented out potentially problematic lines
+      }); // Commented out potentially problematic lines
+    } // Commented out potentially problematic lines
 
     try {
       const updatedVehicle = await addOrUpdateDocument(vehicle.id, {

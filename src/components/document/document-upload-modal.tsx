@@ -353,6 +353,9 @@ export function DocumentUploadModal({
             duration: 5000,
         });
     }
+ catch (error) {
+ logger.error("Error showing user notes toast:", error);
+ }
 
     setIsAIConfirmModalOpen(false);
     setRawAIDataForConfirm(null); // Clear data after use
